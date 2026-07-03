@@ -5,6 +5,13 @@
     "version": "0.2.0",
     "configurations": [
         {
+            "type": "java",
+            "name": "TbForumApplication",
+            "request": "launch",
+            "mainClass": "com.tbforum.TbForumApplication",
+            "projectName": "tbforum"
+        },
+        {
             "type": "jdk",
             "request": "launch",
             "name": "Launch Java App"

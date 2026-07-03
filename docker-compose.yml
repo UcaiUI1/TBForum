@@ -1,24 +1,12 @@
-version: '3.8'
-
 services:
-  # 1. PostgreSQL 数据库
   postgres:
     image: postgres:15-alpine
     container_name: tbforum-postgres
     environment:
       POSTGRES_DB: tbforum_db
-      POSTGRES_USER: tbforum_user
-      POSTGRES_PASSWORD: 123456
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: Pzc86497558
+
     ports:
       - "5432:5432"
-    volumes:
-      - ./init.sql:/docker-entrypoint-initdb.d/init.sql   # 稍后我们放建表脚本
-    restart: unless-stopped
-
-  # 2. Redis 缓存
-  redis:
-    image: redis:7.2-alpine
-    container_name: tbforum-redis
-    ports:
-      - "6379:6379"
     restart: unless-stopped

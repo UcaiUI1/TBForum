@@ -1,2 +1,15 @@
-com\tbforum\controller\TestController.class
+com\tbforum\repository\ForumRepository.class
+com\tbforum\config\SecurityConfig.class
+com\tbforum\model\entity\User$AuthLevel.class
+com\tbforum\service\auth\CustomUserDetailsService.class
+com\tbforum\util\JwtUtil.class
+com\tbforum\model\entity\Forum.class
+com\tbforum\model\dto\RegisterRequestDTO.class
+com\tbforum\TestController.class
 com\tbforum\TbForumApplication.class
+com\tbforum\repository\UserRepository.class
+com\tbforum\model\entity\User.class
+com\tbforum\service\ForumService.class
+com\tbforum\controller\ForumController.class
+com\tbforum\filter\JwtAuthenticationFilter.class
+com\tbforum\model\dto\ForumCreateDTO.class
