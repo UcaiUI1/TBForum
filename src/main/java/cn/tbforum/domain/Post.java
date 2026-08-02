@@ -1,0 +1,13 @@
+package cn.tbforum.domain;
+import jakarta.persistence.*; import java.time.Instant;
+@Entity @Table(name="posts",indexes=@Index(name="idx_posts_forum_created",columnList="forum_id,createdAt")) public class Post {
+ @Id @GeneratedValue(strategy=GenerationType.IDENTITY) public Long id;
+ @ManyToOne(optional=false) public Forum forum;
+ @ManyToOne(optional=false) public User author;
+ @Column(nullable=false,length=180) public String title;
+ @Column(nullable=false,columnDefinition="TEXT") public String content;
+ @Column(nullable=false) public Instant createdAt=Instant.now();
+ public long views=0, upvotes=0, downvotes=0, commentCount=0;
+ public boolean featured=false, deleted=false, locked=false;
+ public boolean edited=false; public Instant editedAt;
+}

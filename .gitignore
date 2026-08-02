@@ -1,0 +1,28 @@
+# 构建产物
+target/
+frontend/dist/
+frontend/node_modules/
+
+# 运行时数据
+uploads/
+data/
+work/
+outputs/
+
+# 日志
+*.log
+
+# IDE
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+
+# 系统
+.DS_Store
+Thumbs.db
+
+# 敏感配置（本地覆盖）
+application-local.yml
+application-local.properties
