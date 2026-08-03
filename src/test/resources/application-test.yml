@@ -9,13 +9,10 @@ spring:
     properties.hibernate.format_sql: false
   flyway:
     enabled: false
-  data:
-    redis:
-      host: localhost
-      port: 6379
   autoconfigure:
     exclude:
       - org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration
 server.error.include-message: always
 app.jwt.secret: test-secret-key-for-jwt-signing-must-be-long-enough-1234567890
 app.jwt.expiration-hours: 1
+app.rate-limit.enabled: false

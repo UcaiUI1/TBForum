@@ -17,6 +17,24 @@ spring:
       port: ${REDIS_PORT:6379}
       password: ${REDIS_PASSWORD:}
       timeout: 2000ms
-server.error.include-message: always
 app.jwt.secret: ${JWT_SECRET}
 app.jwt.expiration-hours: 24
+server:
+  error:
+    include-message: never
+    include-stacktrace: never
+    include-exception: false
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: when-authorized
+  health:
+    redis:
+      enabled: true
+  metrics:
+    tags:
+      application: tbforum

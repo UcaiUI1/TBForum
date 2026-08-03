@@ -64,6 +64,7 @@ CREATE TABLE posts (
     edited_at       TIMESTAMP
 );
 CREATE INDEX idx_posts_forum_created ON posts (forum_id, created_at);
+CREATE INDEX idx_posts_author ON posts (author_id, created_at);
 
 -- ------------------------------------------------------------
 -- comments  (Comment.java)

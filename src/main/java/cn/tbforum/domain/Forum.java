@@ -9,4 +9,5 @@ import jakarta.persistence.*; import java.time.Instant;
  @Column(nullable=false,updatable=false) public Instant createdAt=Instant.now();
  @Column(length=60) public String customReportReason1;
  @Column(length=60) public String customReportReason2;
+ public boolean deleted=false;
 }

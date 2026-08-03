@@ -4,10 +4,12 @@ services:
     environment:
       POSTGRES_DB: tbforum
       POSTGRES_USER: tbforum
-      POSTGRES_PASSWORD: tbforum
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tbforum}
     ports: ["5432:5432"]
     volumes: ["pg-data:/var/lib/postgresql/data"]
-  redis:
-    image: redis:7-alpine
-    ports: ["6379:6379"]
-volumes: { pg-data: {} }
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tbforum"]
+      interval: 10s
+      timeout: 5s
+      retries

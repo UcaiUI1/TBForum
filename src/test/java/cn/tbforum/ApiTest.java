@@ -1,4 +1,5 @@
 package cn.tbforum;
+import cn.tbforum.domain.Role;
 import org.junit.jupiter.api.*;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -15,7 +16,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 /**
  * P3 后端集成测试：覆盖认证、版块、帖子、评论、举报核心流程。
- * 使用 H2 内存数据库（test profile），@Transactional 隔离由 MockMvc 自动回滚机制保证。
+ * 使用 H2 内存数据库（test profile），@Transactional 隔离由 Spring TestContext 框架在测试方法执行后自动回滚事务来保证。
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -24,6 +25,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class ApiTest {
     @Autowired MockMvc mvc;
     @Autowired ObjectMapper json;
+    @Autowired cn.tbforum.repo.UserRepository users;
 
     String aliceToken, bobToken, adminToken;
     String aliceUser="alice_test", bobUser="bob_test", adminUser="admin_test";
@@ -49,8 +51,8 @@ class ApiTest {
         aliceToken = register(aliceUser);
         bobToken = register(bobUser);
         adminToken = register(adminUser);
-        // 提升 admin 为 ADMIN 角色（直接通过 /api/auth/me 无法提升，这里用 SQL 注入测试 profile 的方式跳过，
-        // 改为在测试 profile 中通过 CommandLineRunner 初始化，此处仅验证非 admin 功能）
+        // 将 admin 提升为 ADMIN 角色
+        users.findByUsername(adminUser).ifPresent(u->{u.role=Role.ADMIN;users.save(u);});
     }
 
     // ===== 认证测试 =====
@@ -301,7 +303,7 @@ class ApiTest {
         createComment();
         mvc.perform(get("/api/posts/"+postId+"/comments"))
             .andExpect(status().isOk())
-            .andExpect(jsonPath("$[0].content").value("测试评论内容"));
+            .andExpect(jsonPath("$.content[0].content").value("测试评论内容"));
     }
 
     @Test

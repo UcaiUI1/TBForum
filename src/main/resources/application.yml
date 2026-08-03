@@ -7,6 +7,7 @@ spring:
     hibernate.ddl-auto: ${DDL_AUTO:update}
     open-in-view: false
     properties.hibernate.format_sql: true
+    properties.hibernate.type.preferred_instant_jdbc_type: TIMESTAMP
   flyway:
     enabled: ${FLYWAY_ENABLED:false}
     locations: classpath:db/migration
@@ -24,3 +25,8 @@ spring:
 server.error.include-message: always
 app.jwt.secret: ${JWT_SECRET:change-this-development-key-to-a-long-random-secret-123456789}
 app.jwt.expiration-hours: 24
+management:
+  endpoints.web.exposure.include: health,info,metrics,prometheus
+  endpoint.health.show-details: when-authorized
+  health.redis.enabled: true
+  metrics.tags.application: tbforum

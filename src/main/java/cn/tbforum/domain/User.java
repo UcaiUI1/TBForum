@@ -7,7 +7,8 @@ import jakarta.persistence.*; import java.time.Instant;
  @Column(nullable=false) public boolean verified=false;
  @Enumerated(EnumType.STRING) @Column(nullable=false) public Role role=Role.USER;
  @Column(nullable=false,updatable=false) public Instant createdAt=Instant.now();
- @Lob public String avatarUrl;
+ @Column(columnDefinition="text") public String avatarUrl;
  @Column(length=500) public String bio;
  @Column(length=100) public String signature;
+ public boolean deleted=false;
 }
