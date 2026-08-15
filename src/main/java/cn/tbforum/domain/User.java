@@ -13,4 +13,5 @@ import jakarta.persistence.*; import java.time.Instant;
  public boolean deleted=false;
  public Instant bannedUntil;
  public Instant mutedUntil;
+ @Column(length=255) public String email;
 }

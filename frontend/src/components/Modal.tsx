@@ -22,7 +22,8 @@ type Props = {
 export function Modal({ type, close, change, submit, active, postForm, setPostForm, token, onError, draftActive, onClearDraft }: Props) {
   const auth = type === 'login' || type === 'register';
   const registering = type === 'register';
-  const title = auth ? (registering ? '创建你的账号' : '回到讨论中') : type === 'post' ? `在「${active?.name}」发布` : '创建你的版块';
+  const forgot = type === 'forgot';
+  const title = auth ? (registering ? '创建你的账号' : '回到讨论中') : type === 'post' ? `在「${active?.name}」发布` : type === 'forum' ? '创建你的版块' : '找回密码';
   const [preview, setPreview] = useState(false);
   const [uploading, setUploading] = useState(false);
 
@@ -51,7 +52,16 @@ export function Modal({ type, close, change, submit, active, postForm, setPostFo
           <>
             <input required name="username" minLength={3} maxLength={40} placeholder="用户名（3–40 位）" />
             <input required name="password" type="password" minLength={8} maxLength={100} placeholder="密码（至少 8 位）" />
-            <small>{registering ? '已有账号？' : '还没有账号？'} <button type="button" className="text-link" onClick={() => change(registering ? 'login' : 'register')}>{registering ? '去登录' : '立即注册'}</button></small>
+            {registering && <input name="email" type="email" maxLength={255} placeholder="邮箱（可选，用于找回密码）" />}
+            <small>{registering ? '已有账号？' : '还没有账号？'} <button type="button" className="text-link" onClick={() => change(registering ? 'login' : 'register')}>{registering ? '去登录' : '立即注册'}</button>
+              {!registering && <> · <button type="button" className="text-link" onClick={() => change('forgot')}>忘记密码？</button></>}
+            </small>
+          </>
+        )}
+        {forgot && (
+          <>
+            <input required name="email" type="email" maxLength={255} placeholder="注册时填写的邮箱" />
+            <small>输入邮箱后，我们会发送一封密码重置链接。 <button type="button" className="text-link" onClick={() => change('login')}>返回登录</button></small>
           </>
         )}
         {type === 'post' && (
@@ -86,7 +96,7 @@ export function Modal({ type, close, change, submit, active, postForm, setPostFo
             <textarea name="description" rows={3} placeholder="一句话描述这里适合聊什么" />
           </>
         )}
-        <button className="primary" type="submit">{auth ? (registering ? '注册并进入论坛' : '登录') : '确认发布'}</button>
+        <button className="primary" type="submit">{forgot ? '发送重置链接' : auth ? (registering ? '注册并进入论坛' : '登录') : '确认发布'}</button>
       </form>
     </div>
   );

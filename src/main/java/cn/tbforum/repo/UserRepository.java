@@ -3,4 +3,5 @@ import cn.tbforum.domain.User; import org.springframework.data.jpa.repository.Jp
 import java.util.*;
 public interface UserRepository extends JpaRepository<User,Long>{
  Optional<User> findByUsername(String username); List<User> findTop10ByUsernameContainingIgnoreCase(String username);
+ Optional<User> findByEmail(String email);
 }

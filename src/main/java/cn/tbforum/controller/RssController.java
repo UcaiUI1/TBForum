@@ -32,8 +32,8 @@ public class RssController {
   for(PostView p:posts){
    sb.append("<item>");
    sb.append("<title>").append(esc(p.title())).append("</title>");
-   sb.append("<link>").append(base).append("/#/post/").append(p.id()).append("</link>");
-   sb.append("<guid>").append(base).append("/#/post/").append(p.id()).append("</guid>");
+   sb.append("<link>").append(base).append("/post/").append(p.id()).append("</link>");
+   sb.append("<guid>").append(base).append("/post/").append(p.id()).append("</guid>");
    sb.append("<author>").append(esc(p.author())).append("</author>");
    sb.append("<pubDate>").append(RFC1123.format(p.createdAt().atZone(ZoneOffset.UTC))).append("</pubDate>");
    sb.append("<description>").append(esc(p.content().length()>500?p.content().substring(0,500)+"…":p.content())).append("</description>");
@@ -49,11 +49,11 @@ public class RssController {
   StringBuilder sb=new StringBuilder();
   sb.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
   sb.append("<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">");
-  sb.append("<url><loc>").append(base).append("/#/</loc></url>");
-  sb.append("<url><loc>").append(base).append("/#/global</loc></url>");
-  forums.findByDeletedFalse(PageRequest.of(0,200)).forEach(f->sb.append("<url><loc>").append(base).append("/#/forum/").append(f.slug).append("</loc></url>"));
-  tags.findTop50ByOrderByPostCountDesc().forEach(t->sb.append("<url><loc>").append(base).append("/#/tag/").append(esc(t.name)).append("</loc></url>"));
-  posts.findAllByDeletedFalseOrderByCreatedAtDesc(PageRequest.of(0,200)).forEach(p->sb.append("<url><loc>").append(base).append("/#/post/").append(p.id).append("</loc></url>"));
+  sb.append("<url><loc>").append(base).append("/</loc></url>");
+  sb.append("<url><loc>").append(base).append("/global</loc></url>");
+  forums.findByDeletedFalse(PageRequest.of(0,200)).forEach(f->sb.append("<url><loc>").append(base).append("/forum/").append(f.slug).append("</loc></url>"));
+  tags.findTop50ByOrderByPostCountDesc().forEach(t->sb.append("<url><loc>").append(base).append("/tag/").append(esc(t.name)).append("</loc></url>"));
+  posts.findAllByDeletedFalseOrderByCreatedAtDesc(PageRequest.of(0,200)).forEach(p->sb.append("<url><loc>").append(base).append("/post/").append(p.id).append("</loc></url>"));
   sb.append("</urlset>");
   return sb.toString();
  }

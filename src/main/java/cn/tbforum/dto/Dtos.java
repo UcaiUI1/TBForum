@@ -3,7 +3,9 @@ import cn.tbforum.domain.*; import cn.tbforum.repo.FollowRepository; import cn.t
 import jakarta.validation.constraints.*; import java.time.Instant; import java.util.List;
 public final class Dtos {
  private Dtos() {}
- public record Credentials(@NotBlank @Size(min=3,max=40) @Pattern(regexp="[a-zA-Z0-9_\\u4e00-\\u9fa5]{3,40}") String username,@NotBlank @Size(min=8,max=100) String password){}
+ public record Credentials(@NotBlank @Size(min=3,max=40) @Pattern(regexp="[a-zA-Z0-9_\\u4e00-\\u9fa5]{3,40}") String username,@NotBlank @Size(min=8,max=100) String password,@Email @Size(max=255) String email){}
+ public record ForgotInput(@NotBlank @Email @Size(max=255) String email){}
+ public record ResetInput(@NotBlank @Size(max=200) String token,@NotBlank @Size(min=8,max=100) String newPassword){}
  public record Token(String token,String username){}
  public record ForumInput(@NotBlank @Size(max=100) String name,@NotBlank @Pattern(regexp="[a-z0-9-]{3,64}") String slug,@Size(max=500) String description){}
  public record PostInput(@NotBlank @Size(max=180) String title,@NotBlank @Size(max=20000) String content){}

@@ -1,5 +1,5 @@
 // 通知上下文：集中管理通知列表、未读数与 WebSocket 连接（含指数退避重连）
-import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useState, useCallback } from 'react';
 import type { Notification } from '../types';
 import { notifApi } from '../services/api';
 import { useAuth } from './AuthContext';
@@ -23,13 +23,28 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [showNotif, setShowNotif] = useState(false);
+  // 已见过的通知 id，用于 WS 消息去重
+  const seenIds = useRef<Set<number>>(new Set());
   // 点击通知的回调（由 App 注入，用于跳转到对应帖子）
   const [clickCb, setClickCb] = useState<(n: Notification) => Promise<void>>(async () => {});
 
   // token 变化时拉取通知
   useEffect(() => {
     if (!token) return;
-    notifApi.list(token).then(setNotifications).catch(e => console.warn('API:', e));
+    notifApi.list(token).then(list => {
+      setNotifications(list);
+      seenIds.current = new Set(list.map(n => n.id));
+    }).catch(e => console.warn('API:', e));
+    notifApi.unreadCount(token).then(d => setUnreadCount(d.count)).catch(e => console.warn('API:', e));
+  }, [token]);
+
+  // 拉取快照（重连后用于补齐断线期间错过的通知）
+  const resync = useCallback(() => {
+    if (!token) return;
+    notifApi.list(token).then(list => {
+      setNotifications(list);
+      seenIds.current = new Set(list.map(n => n.id));
+    }).catch(e => console.warn('API:', e));
     notifApi.unreadCount(token).then(d => setUnreadCount(d.count)).catch(e => console.warn('API:', e));
   }, [token]);
 
@@ -43,14 +58,17 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     const connect = () => {
       try {
         ws = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws/notifications`, [`bearer.${token}`]);
-        ws.onopen = () => { retryCount = 0; };
+        ws.onopen = () => { retryCount = 0; resync(); };
         ws.onmessage = e => {
           try {
             const d = JSON.parse(e.data);
             if (Array.isArray(d)) {
-              setNotifications(list => [...d, ...list].slice(0, 50));
-              setUnreadCount(c => c + d.filter((x: Notification) => !x.read).length);
+              seenIds.current = new Set(d.map((x: Notification) => x.id));
+              setNotifications(d.slice(0, 50));
+              setUnreadCount(d.filter((x: Notification) => !x.read).length);
             } else if (d && typeof d.id === 'number') {
+              if (seenIds.current.has(d.id)) return;
+              seenIds.current.add(d.id);
               setNotifications(list => [d as Notification, ...list].slice(0, 50));
               if (!(d as Notification).read) setUnreadCount(c => c + 1);
             }
@@ -73,7 +91,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     };
     connect();
     return () => { closed = true; if (timer) clearTimeout(timer); ws?.close(); };
-  }, [token, logout]);
+  }, [token, logout, resync]);
 
   const markRead = useCallback(async (id: number) => {
     if (!token) return;

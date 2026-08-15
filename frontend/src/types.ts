@@ -95,7 +95,7 @@ export type ReportView = {
   handledAt: string | null;
 };
 
-export type ModalType = 'login' | 'register' | 'post' | 'forum';
+export type ModalType = 'login' | 'register' | 'post' | 'forum' | 'forgot';
 
 export type ReportFilter = 'PENDING' | 'RESOLVED' | 'DISMISSED' | 'ALL';
 

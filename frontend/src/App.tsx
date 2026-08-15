@@ -24,6 +24,7 @@ import { Modal } from './components/Modal';
 import { ConfirmModal } from './components/ConfirmModal';
 import { ContextMenu } from './components/ContextMenu';
 import { ReportModal } from './components/ReportModal';
+import { ResetView } from './components/ResetView';
 
 // 代码分割：管理面板懒加载，减小首屏体积
 const ModPanel = lazy(() => import('./components/ModPanel').then(m => ({ default: m.ModPanel })));
@@ -38,12 +39,12 @@ type Route =
   | { kind: 'tag'; name: string }
   | { kind: 'post'; id: number }
   | { kind: 'user'; username: string }
-  | { kind: 'profile' };
+  | { kind: 'profile' }
+  | { kind: 'reset'; token: string };
 
-function parseHash(): Route | null {
-  const h = window.location.hash.replace(/^#\/?/, '');
-  if (!h) return null;
-  const parts = h.split('/').map(decodeURIComponent);
+function parsePath(): Route | null {
+  const parts = window.location.pathname.split('/').filter(Boolean).map(decodeURIComponent);
+  if (parts.length === 0) return null;
   switch (parts[0]) {
     case 'global': return { kind: 'global' };
     case 'forum': return parts[1] ? { kind: 'forum', slug: parts[1] } : null;
@@ -54,6 +55,7 @@ function parseHash(): Route | null {
     }
     case 'u': return parts[1] ? { kind: 'user', username: parts[1] } : null;
     case 'profile': return { kind: 'profile' };
+    case 'reset': return { kind: 'reset', token: new URLSearchParams(window.location.search).get('token') || '' };
     default: return null;
   }
 }
@@ -103,6 +105,7 @@ export function App() {
   const [pendingCommentId, setPendingCommentId] = useState<number | null>(null);
   const [modReports, setModReports] = useState<ReportView[]>([]);
   const [modReportPending, setModReportPending] = useState(0);
+  const [viewResetToken, setViewResetToken] = useState<string | null>(null);
   const [adminAudit, setAdminAudit] = useState<AuditLogView[]>([]);
   const [adminAuditPage, setAdminAuditPage] = useState(0);
   const [adminAuditTotalPages, setAdminAuditTotalPages] = useState(1);
@@ -157,10 +160,13 @@ export function App() {
     noticeTimer.current = window.setTimeout(() => setNotice(''), 3500);
   }, []);
 
-  // ===== hash 路由 =====
-  const navigate = useCallback((hash: string) => {
+  // ===== History API 路由 =====
+  const navigate = useCallback((path: string) => {
     setNavOpen(false);
-    if (window.location.hash !== hash) window.location.hash = hash;
+    if (window.location.pathname !== path) {
+      window.history.pushState(null, '', path);
+      applyRouteRef.current(parsePath());
+    }
   }, []);
 
   // 主题：写入 html[data-theme] 并持久化
@@ -169,11 +175,11 @@ export function App() {
     try { localStorage.setItem('tb-theme', theme); } catch { /* ignore */ }
   }, [theme]);
 
-  const listHash = useCallback(() => {
-    if (activeTag) return `#/tag/${encodeURIComponent(activeTag)}`;
-    if (globalMode) return '#/global';
-    if (active) return `#/forum/${active.slug}`;
-    return '#/';
+  const listPath = useCallback(() => {
+    if (activeTag) return `/tag/${encodeURIComponent(activeTag)}`;
+    if (globalMode) return '/global';
+    if (active) return `/forum/${active.slug}`;
+    return '/';
   }, [activeTag, globalMode, active]);
 
   const showProfile = useCallback(() => {
@@ -217,18 +223,21 @@ export function App() {
       case 'profile':
         showProfile();
         break;
+      case 'reset':
+        setViewProfile(false); setViewUser(null); setViewPostId(null); setViewResetToken(r.token);
+        break;
     }
   }, [forums, showProfile, showUser]);
 
   const applyRouteRef = useRef(applyRoute);
   applyRouteRef.current = applyRoute;
 
-  // 首次挂载 + hash 变化时应用路由
+  // 首次挂载 + 浏览器前进/后退时应用路由
   useEffect(() => {
-    const onHash = () => applyRouteRef.current(parseHash());
-    onHash();
-    window.addEventListener('hashchange', onHash);
-    return () => window.removeEventListener('hashchange', onHash);
+    const onPop = () => applyRouteRef.current(parsePath());
+    onPop();
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
   }, []);
 
   // 版块数据到达后解析路由中的 slug
@@ -243,7 +252,7 @@ export function App() {
   // 通知点击 → 跳转帖子
   useEffect(() => {
     setOnNotifClick(async (n) => {
-      if (n.postId) { setSearching(false); setPendingCommentId(n.commentId ?? null); navigate(`#/post/${n.postId}`); }
+      if (n.postId) { setSearching(false); setPendingCommentId(n.commentId ?? null); navigate(`/post/${n.postId}`); }
     });
   }, [setOnNotifClick, navigate]);
 
@@ -275,11 +284,11 @@ export function App() {
     return () => { document.removeEventListener('mousedown', h); window.removeEventListener('scroll', h); window.removeEventListener('resize', h); };
   }, [ctxMenu]);
 
-  // 初始化版块（无 hash 时默认第一个）并规范化 URL
+  // 初始化版块（根路径时默认第一个）并规范化 URL
   useEffect(() => {
     if (forums.length && !active && !globalMode && !activeTag) {
       setActive(forums[0]);
-      if (!window.location.hash) history.replaceState(null, '', `#/forum/${forums[0].slug}`);
+      if (window.location.pathname === '/' || window.location.pathname === '') history.replaceState(null, '', `/forum/${forums[0].slug}`);
     }
   }, [forums, active, globalMode, activeTag]);
 
@@ -299,14 +308,14 @@ export function App() {
   }, [postForm, modal]);
 
   // 导航
-  const enterGlobal = () => navigate('#/global');
-  const enterForum = (f: Forum) => navigate(`#/forum/${f.slug}`);
-  const enterTag = (tag: string) => navigate(`#/tag/${encodeURIComponent(tag)}`);
-  const openPost = (p: Post) => navigate(`#/post/${p.id}`);
-  const openUser = (username: string) => navigate(`#/u/${encodeURIComponent(username)}`);
-  const openProfile = () => navigate('#/profile');
-  const closePost = () => navigate(listHash());
-  const exitSearch = () => { setSearching(false); setQuery(''); navigate(listHash()); };
+  const enterGlobal = () => navigate('/global');
+  const enterForum = (f: Forum) => navigate(`/forum/${f.slug}`);
+  const enterTag = (tag: string) => navigate(`/tag/${encodeURIComponent(tag)}`);
+  const openPost = (p: Post) => navigate(`/post/${p.id}`);
+  const openUser = (username: string) => navigate(`/u/${encodeURIComponent(username)}`);
+  const openProfile = () => navigate('/profile');
+  const closePost = () => navigate(listPath());
+  const exitSearch = () => { setSearching(false); setQuery(''); navigate(listPath()); };
 
   const isModerator = !!active && (active.owner.username === user || mods.includes(user));
   const canDelete = (p: Post) => !!token && (p.author === user || isModerator);
@@ -317,10 +326,22 @@ export function App() {
     const f = new FormData(e.currentTarget);
     const registering = modal === 'register';
     try {
-      const r = await authApi[registering ? 'register' : 'login'](String(f.get('username')), String(f.get('password')));
+      const username = String(f.get('username'));
+      const password = String(f.get('password'));
+      const r = registering ? await authApi.register(username, password, String(f.get('email') || '')) : await authApi.login(username, password);
       login(r.token, r.username);
       setModal(null);
       notify(registering ? `注册成功，欢迎加入 ${r.username}` : `欢迎回来，${r.username}`);
+    } catch (err) { showError(err); }
+  }
+
+  async function submitForgot(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const f = new FormData(e.currentTarget);
+    try {
+      await authApi.forgotPassword(String(f.get('email')));
+      setModal(null);
+      notify('如果该邮箱已注册，重置链接已发送（开发环境请查看后端控制台日志）');
     } catch (err) { showError(err); }
   }
 
@@ -379,7 +400,7 @@ export function App() {
       const id = confirmDel.id;
       setConfirmDel(null);
       await postApi.delete(token, id);
-      if (viewPostId === id) { setViewPostId(null); navigate(listHash()); }
+      if (viewPostId === id) { setViewPostId(null); navigate(listPath()); }
       postsQuery.refetch();
       notify('帖子已删除');
     } catch (err) { showError(err); }
@@ -489,7 +510,7 @@ export function App() {
 
   // 个人中心
   function openProfileSelf() {
-    navigate('#/profile');
+    navigate('/profile');
   }
 
   async function submitProfile(e: FormEvent<HTMLFormElement>) {
@@ -499,7 +520,7 @@ export function App() {
       if (r.token) { login(r.token, r.user.username); }
       setVerified(r.user.verified);
       setViewProfile(false);
-      navigate(listHash());
+      navigate(listPath());
       notify('个人资料已更新');
     } catch (err) { showError(err); }
   }
@@ -661,14 +682,16 @@ export function App() {
         onEnterGlobal={enterGlobal}
         onEnterForum={enterForum}
         onEnterTag={enterTag}
-        onExitTag={() => navigate(listHash())}
+        onExitTag={() => navigate(listPath())}
         onCreateForum={() => token ? setModal('forum') : setModal('login')}
         onRequireLogin={() => setModal('login')}
         mobileOpen={navOpen}
         onCloseNav={() => setNavOpen(false)}
       />
       <main>
-        {viewProfile ? (
+        {viewResetToken ? (
+          <ResetView onDone={() => { setViewResetToken(null); notify('密码已重置，请重新登录'); navigate('/'); }} />
+        ) : viewProfile ? (
           <ProfileView
             profile={profileForm}
             isSelf
@@ -680,7 +703,7 @@ export function App() {
             setEditForm={setProfileForm}
             token={token}
             onError={showError}
-            onBack={() => navigate(listHash())}
+            onBack={() => navigate(listPath())}
             onOpenPost={openPost}
             onOpenUser={openUser}
             onSubmitProfile={submitProfile}
@@ -702,12 +725,12 @@ export function App() {
             setEditForm={() => {}}
             token={token}
             onError={showError}
-            onBack={() => navigate(listHash())}
+            onBack={() => navigate(listPath())}
             onOpenPost={openPost}
             onOpenUser={openUser}
             onSubmitProfile={async () => {}}
             onToggleFollow={toggleFollow}
-            onEditProfile={() => { navigate('#/profile'); }}
+            onEditProfile={() => { navigate('/profile'); }}
             onAvatarChange={async () => {}}
             onRemoveAvatar={() => {}}
           />
@@ -794,7 +817,7 @@ export function App() {
           type={modal}
           close={() => { setModal(null); setPostForm({ title: '', content: '' }); }}
           change={setModal}
-          submit={modal === 'login' || modal === 'register' ? submitAuth : modal === 'post' ? submitPost : submitForum}
+          submit={modal === 'login' || modal === 'register' ? submitAuth : modal === 'post' ? submitPost : modal === 'forum' ? submitForum : submitForgot}
           active={active}
           postForm={postForm}
           setPostForm={setPostForm}

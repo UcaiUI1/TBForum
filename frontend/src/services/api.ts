@@ -56,10 +56,14 @@ export async function uploadFile(file: File, token: string): Promise<{ url: stri
 
 // ===== 认证 =====
 export const authApi = {
-  register: (username: string, password: string) =>
-    api<{ token: string; username: string }>('/api/auth/register', { method: 'POST', body: JSON.stringify({ username, password }) }),
+  register: (username: string, password: string, email?: string) =>
+    api<{ token: string; username: string }>('/api/auth/register', { method: 'POST', body: JSON.stringify({ username, password, email: email || undefined }) }),
   login: (username: string, password: string) =>
     api<{ token: string; username: string }>('/api/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) }),
+  forgotPassword: (email: string) =>
+    api('/api/auth/forgot-password', { method: 'POST', body: JSON.stringify({ email }) }),
+  resetPassword: (token: string, newPassword: string) =>
+    api('/api/auth/reset-password', { method: 'POST', body: JSON.stringify({ token, newPassword }) }),
   refresh: (token: string) =>
     api<{ token: string; username: string }>('/api/auth/refresh', { method: 'POST' }, token),
   me: (token: string) =>
