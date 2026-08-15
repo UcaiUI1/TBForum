@@ -2,7 +2,7 @@
 
 「随缘而遇，温和交流」的论坛应用 —— 一个没有推荐算法、只有偶然遇见的好内容的社区。
 
-Spring Boot 3.2 + React 18 + TypeScript，支持帖子/评论/标签/关注/通知/举报/管理工具，前后端一体部署。
+Spring Boot 3.2 + React 18 + TypeScript，支持帖子/评论/标签/关注/通知/举报/管理工具，前后端一体化部署。
 
 ## 技术栈
 
@@ -10,7 +10,7 @@ Spring Boot 3.2 + React 18 + TypeScript，支持帖子/评论/标签/关注/通�
 - **前端**：React 18.3、TypeScript、Vite、TanStack React Query 5、marked（Markdown）、DOMPurify（XSS 净化）、highlight.js（代码高亮，按需加载）
 - **数据库**：H2 文件模式（开发）/ PostgreSQL 15（生产）
 - **缓存**：Redis 7（热门列表 + 浏览数防刷 + WebSocket Pub/Sub 多实例广播，带优雅降级）
-- **监控**：Actuator + Micrometer Prometheus（缓存命中率、WS 连接数、发帖计数等指标）
+- **监控**：Actuator + Micrometer Prometheus（缓存命中率、WS 连接数、发帖计数器等指标）
 
 ## 快速启动
 
@@ -51,37 +51,42 @@ npm run build:deploy
 
 ## 核心功能
 
-- **认证**：JWT 注册/登录、token 自动刷新（前端在过期前 5 分钟续期）、用户名改名后重发 token、实名认证
+- **认证**：JWT 注册/登录、token 自动刷新（前端在过期前 5 分钟续期）、用户名改名后重发 token、实名认证、注册可选填邮箱
+- **找回密码**：`forgot-password` 发送一次性重置链接（30 分钟有效、不可复用），开发环境打印在控制台，生产可接入 SMTP
 - **限流**：登录 5 次/分钟、注册 3 次/分钟、上传 10 次/分钟（Bucket4j）
+- **路由**：History API 干净 URL（`/post/:id`、`/forum/:slug`、`/u/:name` 等），支持深链直达、刷新保留、前进后退
 - **版块**：创建版块（需实名）、任命/撤任小版主（最多 2 名）、自定义版块举报原因、版块下线（软删除）
-- **帖子**：发帖、编辑、软删除、锁帖、设为精华；Markdown 渲染 + 代码高亮
-- **排序**：最新 / 热门 / 精华 / 随缘（fate 用 `MOD(id*seed, 1000003)` 伪随机算法 + DB 分页，避免 OOM）
-- **评论**：无限嵌套树（邻接表 + rootId + depth）、回复、编辑、置顶、分页（返回 `Page<CommentView>`）、软删除（显示「[已删除]」）
-- **互动**：点赞/踩（同一用户仅保留最后一次）、收藏
-- **标签**：发帖时自动解析 `#标签`（最多 5 个）、标签云、按标签筛选、原子更新 postCount
+- **帖子**：发布、编辑、软删除、锁帖、设为精华；Markdown 渲染 + 代码高亮；编辑器带实时预览、插图上传、`#` 标签补全与草稿自动保存
+- **排序**：最新 / 热门 / 精华 / 随缘（fate 用 `MOD(id*seed, 1000003)` 伪随机算法 + DB 分页）；热门采用时间衰减评分（点赞 + 评论×2 + 浏览×0.01，除以年龄衰减）
+- **评论**：无限嵌套树（邻接表 + rootId + depth）、回复、编辑、置顶、分页（前端"加载更多"）、作者可删除、软删除占位
+- **互动**：点赞（同一用户仅保留最后一次，`upvoted` 状态可视化）、收藏
+- **标签**：发布时自动解析 `#标签`（最多 5 个）、标签云、按标签筛选、原子更新 postCount
 - **关注**：关注/取关、粉丝/关注列表、互相关注（mutual）状态
-- **通知**：实时 WebSocket 推送（回复/点赞/@提及/精华/关注）、未读计数、全部已读；支持 Redis Pub/Sub 多实例广播
-- **举报**：常规原因 + 版块特色原因、ADMIN 后台处理（标记已处理/驳回）、软删帖后自动关闭关联举报
-- **管理**：版主可设精华/锁帖/置顶评论/管理小版主；ADMIN 处理举报
-- **个人中心**：头像上传（图片文件，≤2MB，魔术数校验 + ImageIO 重编码去除元数据）、昵称、简介、签名、我的帖子/收藏/关注/粉丝
-- **发现**：全站动态 feed、热门标签云、@提及用户搜索（支持中文用户名）
+- **通知**：实时 WebSocket 推送（回复/点赞/@提及/精华/关注）、未读计数、同类通知合并分组、点击定位到具体评论；WS 消息去重、重连自动补拉
+- **举报**：常规原因 + 版块特色原因；ADMIN 或版主后台处理（标记已处理/驳回）；软删帖后自动关闭关联举报
+- **治理**：版主可处理本版举报；ADMIN 可封禁/禁言用户（写入操作被拦截）并查看审计日志（封禁、举报处理、删帖、设精、锁帖均留痕）
+- **个人中心**：头像上传（图片文件，≤2MB，魔数校验 + ImageIO 重编码去除元数据）、签名、简介、我的帖子/收藏/关注/粉丝
+- **发现**：全站动态 feed、热门标签云、@提及用户搜索（支持中文用户名）、RSS 订阅（`/rss.xml`）、sitemap/robots
+- **界面**：深色/浅色主题切换、移动端抽屉导航、列表骨架屏、统一 SVG 图标
 - **可观测**：Prometheus 指标（缓存命中率、WS 活跃连接数、发帖计数器）、健康检查（含 Redis 状态）
 
 ## API 概览
 
 所有端点前缀 `/api`，写操作需 `Authorization: Bearer <token>`。
 
-- **认证**：`POST /auth/register`、`POST /auth/login`、`GET /auth/me`、`POST /auth/refresh`、`PATCH /auth/me`、`PATCH /auth/me/verified`
+- **认证**：`POST /auth/register`、`POST /auth/login`、`GET /auth/me`、`POST /auth/refresh`、`PATCH /auth/me`、`PATCH /auth/me/verified`、`POST /auth/forgot-password`、`POST /auth/reset-password`
 - **版块**：`GET/POST /forums`、`GET /forums/{slug}`、`POST/DELETE /forums/{slug}/moderators/{username}`、`GET /forums/{slug}/moderators`、`GET /forums/{slug}/posts`、`POST /forums/{slug}/posts`、`GET/PATCH /forums/{slug}/report-reasons`
 - **帖子**：`GET /posts/feed?order=latest|hot|featured|fate&seed=`、`GET /posts/{id}`、`DELETE /posts/{id}`、`PATCH /posts/{id}/featured`、`PATCH /posts/{id}/locked`、`PATCH /posts/{id}`（编辑）、`POST /posts/{id}/interactions`
-- **评论**：`POST /posts/{id}/comments`、`GET /posts/{id}/comments`（返回 `Page<CommentView>`）、`PATCH /posts/{id}/comments/{cid}`、`PATCH /posts/{id}/comments/{cid}/pinned`
+- **评论**：`POST /posts/{id}/comments`、`GET /posts/{id}/comments`（返回 `Page<CommentView>`）、`PATCH /posts/{id}/comments/{cid}`、`PATCH /posts/{id}/comments/{cid}/pinned`、`DELETE /posts/{id}/comments/{cid}`
 - **标签**：`GET /tags`、`GET /tags/{name}/posts`
 - **用户**：`GET /users/{username}`、`GET /users/search?q=`、`POST/DELETE /users/{username}/follow`、`GET /users/{username}/followers|following|posts`
 - **收藏**：`POST/DELETE /posts/{id}/favorite`、`GET /users/me/favorites`
 - **通知**：`GET /notifications`、`GET /notifications/unread-count`、`PATCH /notifications/{id}/read`、`PATCH /notifications/read-all`
-- **举报**：`POST /reports`、`GET /admin/reports`、`GET /admin/reports/count`、`PATCH /admin/reports/{id}`
-- **搜索**：`GET /search?q=`（需登录）
+- **举报**：`POST /reports`、`GET /moderator/reports`、`GET /moderator/reports/count`、`PATCH /moderator/reports/{id}`、`GET /admin/reports`、`GET /admin/reports/count`、`PATCH /admin/reports/{id}`
+- **治理**：`PATCH /admin/users/{username}/ban?days=`、`PATCH /admin/users/{username}/mute?days=`、`GET /admin/audit`
+- **搜索**：`GET /search?q=`（游客可用）
 - **上传**：`POST /upload`（图片，≤2MB）
+- **SEO**：`GET /rss.xml`、`GET /sitemap.xml`、`GET /robots.txt`
 - **WebSocket**：`/ws/notifications`（Sec-WebSocket-Protocol 携带 `bearer.{token}`）
 - **监控**：`GET /actuator/health`、`GET /actuator/info`、`GET /actuator/metrics`、`GET /actuator/prometheus`
 

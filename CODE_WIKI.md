@@ -10,6 +10,7 @@
 TBForum 是一个功能完整的轻量级论坛系统，采用前后端分离开发、一体部署模式。核心特色：
 
 - **JWT 无状态认证**：登录/注册返回 token，前端在过期前自动 refresh；无效 token 返回 401 而非静默降级。
+- **2026-08 新增**：History API 路由（`/post/:id` 等）、评论"加载更多"分页、游客搜索、编辑器预览/插图/#标签补全/草稿、点赞状态可视化、版主举报闭环、封禁/禁言与审计日志、通知分组与评论定位、移动端抽屉、浅色主题、骨架屏、SVG 图标、RSS/sitemap、热门排序时间衰减、邮箱找回密码、WebSocket 未读去重。
 - **限流防护**：登录 5 次/分钟、注册 3 次/分钟、上传 10 次/分钟（Bucket4j）。
 - **版块自治**：每个版块由创建者（吧主）管理，可任命最多 2 名小版主，可自定义版块特色举报原因，支持版块下线（软删除）。
 - **多排序帖子流**：最新 / 热门 / 精华 / 随缘四种排序。「随缘」用 `MOD(id*seed, 1000003)` 伪随机算法 + DB 分页，避免全表加载 OOM；「热门」用 `findHotSince` DB 分页。
@@ -45,16 +46,16 @@ TBForum 是一个功能完整的轻量级论坛系统，采用前后端分离开
 │                                                              │
 │  ┌───────────────┐   ┌───────────────┐   ┌───────────────┐  │
 │  │ Security 层    │ → │  Controller   │ → │   Service     │  │
-│  │ JwtFilter     │   │  (12 个控制器) │   │  (8 个服务)   │  │
+│  │ JwtFilter     │   │  (14 个控制器) │   │  (11 个服务)   │  │
 │  │ RateLimitFilter│  │               │   │               │  │
 │  │ SecurityConfig │   └───────┬───────┘   └───────┬───────┘  │
 │  └───────────────┘           │                   │          │
 │        ┌─────────────────────┼───────────────────┘          │
 │        │                     │                              │
 │  ┌─────▼─────┐   ┌──────────▼──────────┐   ┌────────────┐  │
-│  │ 通知服务   │   │ Repository 层 (12)  │   │ 缓存服务   │  │
-│  │ + WebSocket│   │ + Domain 实体 (13)  │   │ + 指标记录 │  │
-│  │ + Redis PS │   │ + DTO (19 record)   │   └────────────┘  │
+│  │ 通知服务   │   │ Repository 层 (14)  │   │ 缓存服务   │  │
+│  │ + WebSocket│   │ + Domain 实体 (15)  │   │ + 指标记录 │  │
+│  │ + Redis PS │   │ + DTO (22 record)   │   └────────────┘  │
 │  └───────────┘   └─────────────────────┘                    │
 │                                                              │
 │  ┌─────────────┐   ┌─────────────┐   ┌─────────────────┐   │
@@ -334,11 +335,11 @@ an-zhao/
 
 ### 5.7 控制器层 — `cn.tbforum.controller`
 
-12 个 `@RestController`，按业务域拆分：
+14 个 `@RestController`，按业务域拆分：
 
 | 控制器 | 路径前缀 | 核心端点 |
 |--------|---------|---------|
-| [AuthController](file:///c:/Users/yangc/Documents/Codex/2026-07-30/an-zhao/src/main/java/cn/tbforum/controller/AuthController.java) | `/api/auth` | register, login, me, refresh, updateProfile, verify |
+| [AuthController](file:///c:/Users/yangc/Documents/Codex/2026-07-30/an-zhao/src/main/java/cn/tbforum/controller/AuthController.java) | `/api/auth` | register, login, me, refresh, updateProfile, verify, forgotPassword, resetPassword |
 | [ForumController](file:///c:/Users/yangc/Documents/Codex/2026-07-30/an-zhao/src/main/java/cn/tbforum/controller/ForumController.java) | `/api/forums` | list, create, get, moderators, reportReasons, posts |
 | [PostController](file:///c:/Users/yangc/Documents/Codex/2026-07-30/an-zhao/src/main/java/cn/tbforum/controller/PostController.java) | `/api/posts` | feed, get, edit, delete, feature, lock, interactions |
 | [CommentController](file:///c:/Users/yangc/Documents/Codex/2026-07-30/an-zhao/src/main/java/cn/tbforum/controller/CommentController.java) | `/api/posts/{id}/comments` | create, tree(分页), edit, pin |
@@ -346,9 +347,9 @@ an-zhao/
 | [FollowController](file:///c:/Users/yangc/Documents/Codex/2026-07-30/an-zhao/src/main/java/cn/tbforum/controller/FollowController.java) | `/api/users` | follow, followers, following |
 | [TagController](file:///c:/Users/yangc/Documents/Codex/2026-07-30/an-zhao/src/main/java/cn/tbforum/controller/TagController.java) | `/api/tags` | popular, postsByTag |
 | [NotificationController](file:///c:/Users/yangc/Documents/Codex/2026-07-30/an-zhao/src/main/java/cn/tbforum/controller/NotificationController.java) | `/api/notifications` | list, unreadCount, markRead, markAllRead |
-| [ReportController](file:///c:/Users/yangc/Documents/Codex/2026-07-30/an-zhao/src/main/java/cn/tbforum/controller/ReportController.java) | `/api/reports` | submit, adminList, count, handle |
+| [ReportController](file:///c:/Users/yangc/Documents/Codex/2026-07-30/an-zhao/src/main/java/cn/tbforum/controller/ReportController.java) | `/api/reports` | submit, moderatorList, moderatorCounts, handleModerated |
 | [UploadController](file:///c:/Users/yangc/Documents/Codex/2026-07-30/an-zhao/src/main/java/cn/tbforum/controller/UploadController.java) | `/api/upload` | 图片上传 |
-| [AdminController](file:///c:/Users/yangc/Documents/Codex/2026-07-30/an-zhao/src/main/java/cn/tbforum/controller/AdminController.java) | `/api/admin` | 举报管理 |
+| [AdminController](file:///c:/Users/yangc/Documents/Codex/2026-07-30/an-zhao/src/main/java/cn/tbforum/controller/AdminController.java) | `/api/admin` | 举报 / 用户治理（封禁/禁言）/ 审计日志 |
 | [WebExceptionHandler](file:///c:/Users/yangc/Documents/Codex/2026-07-30/an-zhao/src/main/java/cn/tbforum/controller/WebExceptionHandler.java) | `@RestControllerAdvice` | 全局异常处理 |
 
 ### 5.8 服务层 — `cn.tbforum.service`
@@ -361,6 +362,8 @@ an-zhao/
 | [CommentService](file:///c:/Users/yangc/Documents/Codex/2026-07-30/an-zhao/src/main/java/cn/tbforum/service/CommentService.java) | 评论创建（锁帖检查）、编辑、树组装（分页 `Page<CommentView>`）、软删除占位 |
 | [InteractionService](file:///c:/Users/yangc/Documents/Codex/2026-07-30/an-zhao/src/main/java/cn/tbforum/service/InteractionService.java) | 点赞/踩（替换式 + 原子计数）、收藏 |
 | [ReportService](file:///c:/Users/yangc/Documents/Codex/2026-07-30/an-zhao/src/main/java/cn/tbforum/service/ReportService.java) | 举报提交（唯一约束）、Admin 处理、软删帖自动关闭关联举报 |
+| [AuditService](file:///c:/Users/yangc/Documents/Codex/2026-07-30/an-zhao/src/main/java/cn/tbforum/service/AuditService.java) | 审计日志：封禁/举报处理/删帖/设精/锁帖留痕，Admin 可查 |
+| [MailService](file:///c:/Users/yangc/Documents/Codex/2026-07-30/an-zhao/src/main/java/cn/tbforum/service/MailService.java) / [ConsoleMailService](file:///c:/Users/yangc/Documents/Codex/2026-07-30/an-zhao/src/main/java/cn/tbforum/service/ConsoleMailService.java) | 邮件发送抽象（开发环境将密码重置链接打印到控制台） |
 | [StorageService](file:///c:/Users/yangc/Documents/Codex/2026-07-30/an-zhao/src/main/java/cn/tbforum/service/StorageService.java) | 存储抽象接口（未来切 MinIO 只需新增实现） |
 | [LocalStorageService](file:///c:/Users/yangc/Documents/Codex/2026-07-30/an-zhao/src/main/java/cn/tbforum/service/LocalStorageService.java) | 本地文件存储（魔术数校验 + ImageIO 重编码去元数据） |
 
@@ -372,7 +375,7 @@ an-zhao/
 
 | 实体 | 表 | 关键字段 | 关系 / 约束 |
 |------|----|---------|------|
-| [User](file:///c:/Users/yangc/Documents/Codex/2026-07-30/an-zhao/src/main/java/cn/tbforum/domain/User.java) | `users` | username(UK,40)、passwordHash、verified、deleted、role、avatarUrl(Lob)、bio(500)、signature(100) | role: USER/ADMIN；deleted 用于软删除 |
+| [User](file:///c:/Users/yangc/Documents/Codex/2026-07-30/an-zhao/src/main/java/cn/tbforum/domain/User.java) | `users` | username(UK,40)、passwordHash、verified、deleted、role、avatarUrl(Lob)、bio(500)、signature(100)、email(255)、bannedUntil、mutedUntil | role: USER/ADMIN；deleted 用于软删除 |
 | [Role](file:///c:/Users/yangc/Documents/Codex/2026-07-30/an-zhao/src/main/java/cn/tbforum/domain/Role.java) | - | USER, ADMIN | 枚举 |
 | [Forum](file:///c:/Users/yangc/Documents/Codex/2026-07-30/an-zhao/src/main/java/cn/tbforum/domain/Forum.java) | `forums` | slug(UK,64)、name(100)、description(500)、deleted、customReportReason1/2(60) | owner→User；deleted 用于下线 |
 | [Post](file:///c:/Users/yangc/Documents/Codex/2026-07-30/an-zhao/src/main/java/cn/tbforum/domain/Post.java) | `posts` | title(180)、content(TEXT)、views/upvotes/downvotes/commentCount、featured/locked/deleted/edited、editedAt | forum、author；索引 idx_posts_forum_created |
@@ -385,15 +388,17 @@ an-zhao/
 | [Report](file:///c:/Users/yangc/Documents/Codex/2026-07-30/an-zhao/src/main/java/cn/tbforum/domain/Report.java) | `reports` | targetType: POST/COMMENT、targetId、reason(80)、status: PENDING/RESOLVED/DISMISSED、handledBy、handledAt | reporter、handledBy；UK(reporter_id, target_type, target_id) |
 | [Tag](file:///c:/Users/yangc/Documents/Codex/2026-07-30/an-zhao/src/main/java/cn/tbforum/domain/Tag.java) | `tags` | name(UK,30)、postCount | 索引 idx_tag_name |
 | [PostTag](file:///c:/Users/yangc/Documents/Codex/2026-07-30/an-zhao/src/main/java/cn/tbforum/domain/PostTag.java) | `post_tags` | - | post、tag；UK(post_id, tag_id) |
+| [AuditLog](file:///c:/Users/yangc/Documents/Codex/2026-07-30/an-zhao/src/main/java/cn/tbforum/domain/AuditLog.java) | `audit_logs` | action/targetType/targetId/detail | actor→User；审计留痕 |
+| [PasswordResetToken](file:///c:/Users/yangc/Documents/Codex/2026-07-30/an-zhao/src/main/java/cn/tbforum/domain/PasswordResetToken.java) | `password_reset_tokens` | tokenHash(UK,100)/expiresAt/used | user→User；一次性重置凭证 |
 
 ### 5.10 仓储层 — `cn.tbforum.repo`
 
-12 个独立 JpaRepository 接口文件。关键自定义查询：
+14 个独立 JpaRepository 接口文件。关键自定义查询：
 
 | 接口 | 自定义方法 |
 |------|-----------|
 | `UserRepository` | `findByUsername`、`findTop10ByUsernameContainingIgnoreCase` |
-| `PostRepository` | `findFateBySeed`（MOD 伪随机分页）、`findFateRandom`、`findHotSince`（DB 分页）、`search`、`incrementViews`（原子更新）、`findAllByDeletedFalseOrderByCreatedAtDesc` |
+| `PostRepository` | `findFateBySeed`（MOD 伪随机分页）、`findFateRandom`、`findHotCandidates`（近 7 天候选，服务层衰减评分）、`search`、`incrementViews`（原子更新）、`findAllByDeletedFalseOrderByCreatedAtDesc` |
 | `CommentRepository` | `findByPostOrderByPinnedDescCreatedAtAsc` |
 | `TagRepository` | `findByName`、`findTop50ByOrderByPostCountDesc`、`incrementPostCount`（原子更新） |
 | `ReportRepository` | `dismissPendingByTarget`（软删帖时关闭关联举报，参数化枚举） |
@@ -408,7 +413,7 @@ an-zhao/
 
 - `frontend/index.html`：极简 HTML，挂载点 `<div id="root">`，加载 `/src/main.tsx`。
 - `frontend/vite.config.ts`：React 插件，dev server `host=0.0.0.0` 监听 5173，`/api` 代理到 `http://127.0.0.1:8089`，`/ws` 代理到 `ws://127.0.0.1:8089`。
-- `frontend/package.json`：`dev`（vite）、`build`（tsc -b && vite build）、`preview`。
+- `frontend/package.json`：`dev`（vite）、`build`（tsc -b && vite build）、`build:deploy`（构建并同步 static）、`preview`。
 
 ### 6.2 应用入口 — `frontend/src/main.tsx`
 
@@ -448,7 +453,7 @@ createRoot(rootEl).render(
 
 - 路径：[NotificationContext.tsx](file:///c:/Users/yangc/Documents/Codex/2026-07-30/an-zhao/frontend/src/contexts/NotificationContext.tsx)
 - 集中管理：`notifications`、`unreadCount`、`showNotif`
-- WebSocket 连接（指数退避重连：3s→6s→12s→24s→30s 封顶，连接成功后重置）
+- WebSocket 连接（指数退避重连：3s→6s→12s→24s→30s 封顶，连接成功后重置；WS 消息按 id 去重，重连后自动拉取快照补齐未读）
 - URL：`ws://${location.host}/ws/notifications`，Sec-WebSocket-Protocol 携带 `bearer.${token}`
 
 #### React Query Hooks — `hooks/`
@@ -457,7 +462,7 @@ createRoot(rootEl).render(
 |------|------|
 | `useForums` | 版块列表 + 热门标签 |
 | `usePosts` | 帖子列表（支持 global/forum/tag 三种来源 × 4 种排序） |
-| `usePostDetail` | 帖子详情 + 评论树（返回 `Comment[]`，从 `Page<Comment>` 提取 `.content`） |
+| `usePostDetail` | 帖子详情 + 评论树（评论按根评论无限滚动分页（useInfiniteQuery + 加载更多）） |
 | `useUserProfile` | 用户资料 + 关注列表 |
 | `useReportState` | 举报状态管理 |
 | `useModState` | 版主状态管理 |
@@ -469,12 +474,12 @@ createRoot(rootEl).render(
 - `api<T>(path, options, token?)`：统一 fetch 封装，自动注入 JSON 头与 Authorization
 - **401 处理**：清除 localStorage token，派发 `tb-auth-expired` 事件
 - **空响应处理**：兼容 201/204 无 body
-- 按业务域分组：`authApi`、`forumApi`、`postApi`、`commentApi`、`userApi`、`notifApi`、`tagApi`、`reportApi`
+- 按业务域分组：`authApi`、`forumApi`、`postApi`、`commentApi`、`userApi`、`notifApi`、`tagApi`、`reportApi`、`adminApi`
 - `uploadFile(file, token)`：FormData 上传，不带 JSON Content-Type
 
 ### 6.5 组件层 — `components/`
 
-14 个 UI 组件，关键组件：
+16 个 UI 组件，关键组件：
 
 - **Header**：顶栏（品牌/搜索/用户菜单/通知铃铛/发布按钮），含实名认证入口
 - **Sidebar**：侧栏（创建版块/全站动态/版块列表/标签云）
@@ -489,7 +494,7 @@ createRoot(rootEl).render(
 ### 6.6 主组件 — `App.tsx`
 
 - 路径：[App.tsx](file:///c:/Users/yangc/Documents/Codex/2026-07-30/an-zhao/frontend/src/App.tsx)
-- 组装所有组件，管理导航状态（`active`/`globalMode`/`activeTag`/`order`/`page`/`seed`）
+- 组装所有组件，管理导航状态（`active`/`globalMode`/`activeTag`/`order`/`page`/`seed`）；History API 路由（`/post/:id`、`/forum/:slug`、`/tag/:name`、`/u/:name`、`/profile`、`/reset`），SPA 回退由后端 `SpaController` 提供
 - 使用 `useReducer` 聚合复杂状态
 - `React.lazy` 代码分割 `ModPanel` 和 `AdminPanel`
 
@@ -499,7 +504,7 @@ createRoot(rootEl).render(
 - **暗色主题**：背景 `#07101d` / 卡片 `#0c1b2d` / 边框 `#33516a` / 主色薄荷青 `#8ef5dc`
 - **Aurora 极光背景**：两个固定模糊光斑（青绿 + 蓝紫），`filter:blur(100px)`
 - **header**：`backdrop-filter:blur(18px)` 半透明毛玻璃
-- **响应式**：`@media(max-width:760px)` 隐藏 aside、缩小 hero
+- **响应式**：`@media(max-width:760px)` 隐藏 aside、抽屉式导航、缩小 hero
 - 完整 Markdown 渲染样式（h1-h6、blockquote、code、table、hljs 高亮）
 
 ---
@@ -511,7 +516,7 @@ createRoot(rootEl).render(
 ### 7.1 表关系
 
 ```
-users (id PK, username UK, passwordHash, verified, deleted, role, avatarUrl, bio, signature, createdAt)
+users (id PK, username UK, passwordHash, verified, deleted, role, avatarUrl, bio, signature, email, bannedUntil, mutedUntil, createdAt)
   │
   ├─< forums (id PK, slug UK, name, description, owner_id FK, deleted, customReportReason1/2, createdAt)
   │       │
@@ -542,6 +547,8 @@ users (id PK, username UK, passwordHash, verified, deleted, role, avatarUrl, bio
   │
   └─< reports (id PK, reporter_id FK, targetType, targetId, reason, status, handledBy_id FK, handledAt, createdAt)
           UK(reporter_id, target_type, target_id), 索引 idx_report_status, idx_report_target
+audit_logs (id PK, actor_id FK→users, action, targetType, targetId, detail, createdAt)
+password_reset_tokens (id PK, user_id FK→users, tokenHash UK, expiresAt, used, createdAt)
 
 tags (id PK, name UK, postCount)
   │  索引 idx_tag_name
@@ -624,8 +631,8 @@ npm run dev
 
 ```powershell
 cd frontend
-npm run build
-# 手动复制 frontend/dist/* 到 src/main/resources/static/
+npm run build:deploy
+# 自动同步到 src/main/resources/static/（见 frontend/scripts/sync-static.mjs）
 ```
 
 ### 9.5 监控端点
@@ -661,7 +668,7 @@ npm run build
 ### 10.3 帖子排序（DB 分页，避免 OOM）
 
 - `latest`：`findAllByDeletedFalseOrderByCreatedAtDesc`，第 0 页缓存 2 分钟
-- `hot`：`findHotSince(now-24h)` DB 分页，公式 `upvotes + commentCount*0.5 + views*0.01`，第 0 页缓存 2 分钟
+- `hot`：近 7 天候选 + 服务层时间衰减评分：`(upvotes + commentCount*2 + views*0.01) / (ageHours+2)^1.5`，第 0 页缓存 2 分钟
 - `featured`：`findByFeaturedTrueAndDeletedFalse`，不缓存
 - `fate`：`findFateBySeed(seed)` 用 `MOD(id*seed, 1000003)` 伪随机 + DB 分页（不加载全表到内存）
 
@@ -696,7 +703,7 @@ npm run build
 
 - 同一用户对同一目标（POST/COMMENT）只能举报一次（唯一约束）
 - 举报原因：7 个标准原因 + 版块特色原因（最多 2 个）+ 自定义文本
-- ADMIN 后台可标记 RESOLVED/DISMISSED，记录 handledBy/handledAt
+- ADMIN 或版主后台可标记 RESOLVED/DISMISSED，记录 handledBy/handledAt；版主只能处理自己管辖版块的举报
 - **软删帖后自动关闭关联举报**：`ReportRepository.dismissPendingByTarget` 将 PENDING 举报标记为 DISMISSED
 
 ### 10.9 数据一致性保障
@@ -726,3 +733,21 @@ npm run build
 13. **错误处理**：前端 `api()` 统一处理 401（清 token + 弹登录框）和错误消息提取；后端 `WebExceptionHandler`（`@RestControllerAdvice`）统一处理 `ResponseStatusException`、`MethodArgumentNotValidException`、`DataIntegrityViolationException` 和通用 `Exception`。
 14. **安全响应头**：`X-Content-Type-Options: nosniff`、`X-Frame-Options: DENY`、HSTS、CSP（meta tag + SecurityConfig 双重保障）。
 15. **图片上传安全**：2MB 大小限制 + 魔术数校验 + `ImageIO` 重编码去除 EXIF 元数据。
+
+---
+
+## 十二、近期更新记录（2026-08）
+
+本轮对项目做了大量功能与体验增强，要点如下：
+
+- **路由**：由 hash 路由升级为 History API（`/post/:id`、`/forum/:slug`、`/tag/:name`、`/u/:name`、`/profile`、`/reset?token=`），后端新增 `SpaController` 做 SPA 回退；RSS/sitemap 链接同步更新。
+- **评论**：前端补上"加载更多"分页（useInfiniteQuery），作者可删除自己的评论。
+- **搜索**：对游客开放（后端本就 permitAll），补齐分页与空态。
+- **编辑器**：Markdown 实时预览、插图上传、`#` 标签补全、发帖草稿自动保存。
+- **互动**：`PostView` 新增 `upvoted`，列表/详情高亮已支持状态（顺带修复详情接口未带 token 导致收藏/点赞状态不显示的问题）。
+- **治理**：版主可处理本版举报（`/api/moderator/reports`）；新增封禁/禁言（`bannedUntil`/`mutedUntil`，写入操作被拦截）与审计日志（`AuditLog`，管理后台可查）；管理后台扩展为举报/用户/审计三个页签。
+- **通知**：同类通知合并分组展示；点击通知跳转并高亮到具体评论；WebSocket 消息按 id 去重、重连后自动拉取快照。
+- **界面**：浅色主题切换、移动端抽屉导航、列表骨架屏、统一 SVG 图标（`Icons.tsx`）。
+- **发现**：`/rss.xml`、`/sitemap.xml`、`/robots.txt`；热门排序改为时间衰减评分；OG 标签与 favicon。
+- **账号**：注册可选邮箱，`POST /api/auth/forgot-password` 与 `POST /api/auth/reset-password` 支持找回密码（开发环境重置链接打印在控制台，生产需接入 SMTP 实现 `MailService`）。
+- **迁移**：新增 `V3__moderation_audit.sql`（users 封禁/禁言列 + audit_logs 表）与 `V4__email_password_reset.sql`（users.email + password_reset_tokens 表）。
