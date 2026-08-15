@@ -91,7 +91,7 @@ export const postApi = {
     api<Page<Post>>(`/api/forums/${slug}/posts?order=${order}&size=10&page=${page}${order === 'fate' ? `&seed=${seed}` : ''}`),
   byTag: (tag: string, order: string, page: number, seed: string) =>
     api<Page<Post>>(`/api/tags/${encodeURIComponent(tag)}/posts?order=${order}&size=10&page=${page}${order === 'fate' ? `&seed=${seed}` : ''}`),
-  search: (q: string) => api<Page<Post>>(`/api/search?q=${encodeURIComponent(q)}&size=10&page=0`),
+  search: (q: string, page = 0) => api<Page<Post>>(`/api/search?q=${encodeURIComponent(q)}&size=10&page=${page}`),
   detail: (id: number, token = '') => api<Post>(`/api/posts/${id}`, {}, token),
   create: (token: string, slug: string, body: { title: string; content: string }) =>
     api<Post>(`/api/forums/${slug}/posts`, { method: 'POST', body: JSON.stringify(body) }, token),
@@ -163,4 +163,10 @@ export const reportApi = {
     api(`/api/admin/reports/${id}?status=${status}`, { method: 'PATCH' }, token),
   counts: (token: string) =>
     api<{ total: number; pending: number }>('/api/admin/reports/count', {}, token),
+  moderatorList: (token: string, forum: string, status: string, page: number) =>
+    api<Page<ReportView>>(`/api/moderator/reports?forum=${encodeURIComponent(forum)}&status=${status}&page=${page}&size=15`, {}, token),
+  moderatorCounts: (token: string, forum: string) =>
+    api<{ total: number; pending: number }>(`/api/moderator/reports/count?forum=${encodeURIComponent(forum)}`, {}, token),
+  moderatorHandle: (token: string, id: number, status: 'RESOLVED' | 'DISMISSED', forum: string) =>
+    api(`/api/moderator/reports/${id}?status=${status}&forum=${encodeURIComponent(forum)}`, { method: 'PATCH' }, token),
 };

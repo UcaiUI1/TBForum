@@ -93,6 +93,11 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     } catch (e) { console.warn('API:', e); }
   }, [token]);
 
+  // 注意：setClickCb 直接传函数会被 React 当作 updater 执行，必须包一层
+  const setOnNotifClick = useCallback((cb: (n: Notification) => Promise<void>) => {
+    setClickCb(() => cb);
+  }, []);
+
   const onNotifClick = useCallback(async (n: Notification) => {
     if (!n.read) await markRead(n.id);
     setShowNotif(false);
@@ -102,7 +107,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
   return (
     <NotificationContext.Provider value={{
       notifications, unreadCount, showNotif, setShowNotif,
-      markRead, markAllRead, onNotifClick, setOnNotifClick: setClickCb,
+      markRead, markAllRead, onNotifClick, setOnNotifClick,
     }}>
       {children}
     </NotificationContext.Provider>

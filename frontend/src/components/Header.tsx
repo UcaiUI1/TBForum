@@ -17,9 +17,12 @@ type Props = {
   onOpenPost: () => void;
   onCreateForum: () => void;
   onVerify: () => void;
+  onOpenNav: () => void;
+  theme: 'dark' | 'light';
+  onToggleTheme: () => void;
 };
 
-export function Header({ query, setQuery, onSearch, onEnterGlobal, onOpenProfile, onOpenAdminPanel, onRequireLogin, onOpenPost, onCreateForum, onVerify }: Props) {
+export function Header({ query, setQuery, onSearch, onEnterGlobal, onOpenProfile, onOpenAdminPanel, onRequireLogin, onOpenPost, onCreateForum, onVerify, onOpenNav, theme, onToggleTheme }: Props) {
   const { user, verified, isAdmin, logout } = useAuth();
   const { notifications, unreadCount, showNotif, setShowNotif, markAllRead, onNotifClick } = useNotifications();
   const [menu, setMenu] = useState(false);
@@ -57,6 +60,7 @@ export function Header({ query, setQuery, onSearch, onEnterGlobal, onOpenProfile
 
   return (
     <header>
+      <button className="nav-toggle" aria-label="打开导航" onClick={onOpenNav}>☰</button>
       <button className="brand" onClick={onEnterGlobal}><span>TB</span><b>FORUM</b></button>
       <form className="search" onSubmit={onSearch}>
         <span>⌕</span>
@@ -64,6 +68,7 @@ export function Header({ query, setQuery, onSearch, onEnterGlobal, onOpenProfile
         <kbd>Enter</kbd>
       </form>
       <div className="head-actions">
+        <button className="theme-toggle" aria-label="切换主题" onClick={onToggleTheme}>{theme === 'dark' ? '☀' : '☾'}</button>
         {user ? (
           <div className="user-menu" ref={menuRef}>
             <button className="user" onClick={() => setMenu(m => !m)}>◉ {user}<i className="caret">▾</i></button>

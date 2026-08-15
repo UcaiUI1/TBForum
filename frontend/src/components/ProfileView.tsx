@@ -24,12 +24,13 @@ type Props = {
   onSubmitProfile: (e: FormEvent<HTMLFormElement>) => void;
   onToggleFollow: () => void;
   onEditProfile: () => void;
+  onCancelEdit?: () => void;
   onAvatarChange: (e: React.ChangeEvent<HTMLInputElement>) => Promise<void>;
   onRemoveAvatar: () => void;
 };
 
 export function ProfileView(props: Props) {
-  const { profile, isSelf, tab, setTab, posts, followList, editForm, setEditForm, token, onError, onBack, onOpenPost, onOpenUser, onSubmitProfile, onToggleFollow, onEditProfile, onAvatarChange, onRemoveAvatar } = props;
+  const { profile, isSelf, tab, setTab, posts, followList, editForm, setEditForm, token, onError, onBack, onOpenPost, onOpenUser, onSubmitProfile, onToggleFollow, onEditProfile, onCancelEdit, onAvatarChange, onRemoveAvatar } = props;
   const showEditForm = isSelf && tab === 'info';
 
   async function handleAvatarChange(e: React.ChangeEvent<HTMLInputElement>) {
@@ -88,7 +89,7 @@ export function ProfileView(props: Props) {
           <div className="profile-field"><label>用户名</label><input value={editForm.username} onChange={e => setEditForm({ ...editForm, username: e.target.value })} minLength={3} maxLength={40} required /></div>
           <div className="profile-field"><label>个人签名</label><input value={editForm.signature} onChange={e => setEditForm({ ...editForm, signature: e.target.value })} maxLength={100} placeholder="一句话展示你的态度" /></div>
           <div className="profile-field"><label>个人简介</label><textarea value={editForm.bio} onChange={e => setEditForm({ ...editForm, bio: e.target.value })} maxLength={500} rows={5} placeholder="介绍一下自己，让别人更了解你" /></div>
-          <div className="profile-foot"><button type="button" className="plain" onClick={onBack}>取消</button><button type="submit" className="primary">保存修改</button></div>
+          <div className="profile-foot"><button type="button" className="plain" onClick={onCancelEdit ?? onBack}>取消</button><button type="submit" className="primary">保存修改</button></div>
         </form>
       ) : tab === 'posts' || tab === 'favorites' ? (
         <div className="tab-content">

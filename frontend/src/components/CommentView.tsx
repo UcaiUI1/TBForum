@@ -35,7 +35,7 @@ export function CommentView({ c, replyTo, setReplyTo, token, onUser, user, postI
   }
 
   return (
-    <div className={'comment-item' + (c.pinned ? ' comment-pinned' : '')} style={{ marginLeft: c.depth * 24 }}>
+    <div className={'comment-item' + (c.pinned ? ' comment-pinned' : '')} style={{ marginLeft: c.depth * 24 }} data-comment-id={c.id}>
       {c.pinned && <div className="pinned-tag">📌 已置顶</div>}
       <div className="comment-head">
         <button className="author-link" onClick={() => onUser(c.author)}>

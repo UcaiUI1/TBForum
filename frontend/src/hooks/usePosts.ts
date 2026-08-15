@@ -20,10 +20,10 @@ export function usePosts(source: Source, order: string, page: number, seed: stri
   });
 }
 
-export function useSearch(query: string, enabled: boolean) {
+export function useSearch(query: string, enabled: boolean, page = 0) {
   return useQuery({
-    queryKey: ['posts', 'search', query],
-    queryFn: () => postApi.search(query),
+    queryKey: ['posts', 'search', query, page],
+    queryFn: () => postApi.search(query, page),
     enabled,
     staleTime: 60_000,
   });

@@ -1,6 +1,6 @@
 // 应用主组件：组装顶栏、侧边栏、主内容区与各弹窗；hash 路由实现可分享深链。
 import React, { FormEvent, Suspense, lazy, useEffect, useMemo, useRef, useState, useCallback } from 'react';
-import type { Post, Forum, Comment, UserProfile, ModalType, ReportFilter } from './types';
+import type { Post, Forum, Comment, UserProfile, ModalType, ReportFilter, ReportView } from './types';
 import { useAuth } from './contexts/AuthContext';
 import { useNotifications } from './contexts/NotificationContext';
 import {
@@ -13,6 +13,7 @@ import { useUserProfile, useUserPosts, useUserFollowList, useMyFavorites } from 
 import { useReportState } from './hooks/useReportState';
 import { useModState } from './hooks/useModState';
 import { useAdminState } from './hooks/useAdminState';
+import { useQueryClient } from '@tanstack/react-query';
 
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
@@ -71,6 +72,7 @@ function loadDraft(): { title: string; content: string } {
 export function App() {
   const { token, user, verified, isAdmin, login, logout, setVerified } = useAuth();
   const { setOnNotifClick } = useNotifications();
+  const qc = useQueryClient();
 
   // 导航与列表状态
   const [active, setActive] = useState<Forum | null>(null);
@@ -96,6 +98,11 @@ export function App() {
   const [postForm, setPostForm] = useState({ title: '', content: '' });
   const [notice, setNotice] = useState('');
   const noticeTimer = useRef<number | undefined>(undefined);
+  const [navOpen, setNavOpen] = useState(false);
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => (localStorage.getItem('tb-theme') as 'dark' | 'light') || 'dark');
+  const [pendingCommentId, setPendingCommentId] = useState<number | null>(null);
+  const [modReports, setModReports] = useState<ReportView[]>([]);
+  const [modReportPending, setModReportPending] = useState(0);
 
   // 个人中心/用户主页状态
   const [viewProfile, setViewProfile] = useState(false);
@@ -115,7 +122,7 @@ export function App() {
   const postsQuery = usePosts(postSource ?? { kind: 'global' }, order, page, seed);
   const posts = postsQuery.data?.content ?? [];
   const totalPages = postsQuery.data ? Math.ceil(postsQuery.data.totalElements / PAGE_SIZE) : 0;
-  const searchQuery = useSearch(query, searching);
+  const searchQuery = useSearch(query, searching, page);
   const displayedPosts = searching ? (searchQuery.data?.content ?? []) : posts;
   const displayedTotalPages = searching ? (searchQuery.data ? Math.ceil(searchQuery.data.totalElements / PAGE_SIZE) : 0) : totalPages;
 
@@ -149,8 +156,15 @@ export function App() {
 
   // ===== hash 路由 =====
   const navigate = useCallback((hash: string) => {
+    setNavOpen(false);
     if (window.location.hash !== hash) window.location.hash = hash;
   }, []);
+
+  // 主题：写入 html[data-theme] 并持久化
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    try { localStorage.setItem('tb-theme', theme); } catch { /* ignore */ }
+  }, [theme]);
 
   const listHash = useCallback(() => {
     if (activeTag) return `#/tag/${encodeURIComponent(activeTag)}`;
@@ -226,9 +240,24 @@ export function App() {
   // 通知点击 → 跳转帖子
   useEffect(() => {
     setOnNotifClick(async (n) => {
-      if (n.postId) { setSearching(false); navigate(`#/post/${n.postId}`); }
+      if (n.postId) { setSearching(false); setPendingCommentId(n.commentId ?? null); navigate(`#/post/${n.postId}`); }
     });
   }, [setOnNotifClick, navigate]);
+
+  // 通知定位：评论加载后滚动到对应评论并高亮
+  useEffect(() => {
+    if (!pendingCommentId || !viewPostId) return;
+    const t = window.setTimeout(() => {
+      const el = document.querySelector(`[data-comment-id="${pendingCommentId}"]`);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        el.classList.add('comment-flash');
+        window.setTimeout(() => el.classList.remove('comment-flash'), 2200);
+      }
+      setPendingCommentId(null);
+    }, 700);
+    return () => clearTimeout(t);
+  }, [pendingCommentId, viewPostId, comments.length]);
 
   // 右键菜单外部点击关闭
   useEffect(() => {
@@ -376,6 +405,7 @@ export function App() {
     if (!token) { setModal('login'); return; }
     try {
       await postApi.favorite(token, p.id, !p.favorited);
+      qc.invalidateQueries({ queryKey: ['user', 'me', 'favorites'] });
       postsQuery.refetch();
       if (viewPostId === p.id) postDetailQuery.refetch();
     } catch (err) { showError(err); }
@@ -449,6 +479,9 @@ export function App() {
     if (!query.trim()) return;
     setPage(0);
     setSearching(true);
+    setViewPostId(null);
+    setViewProfile(false);
+    setViewUser(null);
   }
 
   // 个人中心
@@ -475,15 +508,17 @@ export function App() {
       await userApi.follow(token, viewUser.username, !viewUser.isFollowing);
       const updated = await userApi.profile(viewUser.username, token);
       setViewUser(updated);
+      qc.invalidateQueries({ queryKey: ['user'] });
     } catch (err) { showError(err); }
   }
 
   // 举报
   async function openReport(type: 'POST' | 'COMMENT', id: number) {
     if (!token) { setModal('login'); return; }
-    if (!active) { notify('版块信息缺失'); return; }
+    const slug = viewPost?.forum || active?.slug;
+    if (!slug) { notify('版块信息缺失'); return; }
     try {
-      const r = await forumApi.reportReasons(active.slug);
+      const r = await forumApi.reportReasons(slug);
       report.open({ type, id, reasons: r });
     } catch (err) { showError(err); }
   }
@@ -500,10 +535,26 @@ export function App() {
   }
 
   // 版主面板
+  function loadModReports() {
+    if (!token || !active) return;
+    reportApi.moderatorList(token, active.slug, 'PENDING', 0).then(r => setModReports(r.content)).catch(showError);
+    reportApi.moderatorCounts(token, active.slug).then(d => setModReportPending(d.pending)).catch(e => console.warn('API:', e));
+  }
+
+  async function handleModReport(id: number, status: 'RESOLVED' | 'DISMISSED') {
+    if (!token || !active) return;
+    try {
+      await reportApi.moderatorHandle(token, id, status, active.slug);
+      notify(status === 'RESOLVED' ? '举报已标记处理' : '举报已驳回');
+      loadModReports();
+    } catch (err) { showError(err); }
+  }
+
   function openModPanel() {
     if (!active) return;
     mod.open(active.customReportReason1 || '', active.customReportReason2 || '');
     forumApi.moderators(active.slug).then(r => mod.setModList(r)).catch(e => { console.warn('API:', e); mod.setModList([]); });
+    loadModReports();
   }
 
   async function removeModerator(username: string) {
@@ -566,6 +617,9 @@ export function App() {
         onOpenPost={openPostModal}
         onCreateForum={() => token ? setModal('forum') : setModal('login')}
         onVerify={doVerify}
+        onOpenNav={() => setNavOpen(true)}
+        theme={theme}
+        onToggleTheme={() => setTheme(t => t === 'dark' ? 'light' : 'dark')}
       />
       <Sidebar
         forums={forums}
@@ -580,6 +634,8 @@ export function App() {
         onExitTag={() => navigate(listHash())}
         onCreateForum={() => token ? setModal('forum') : setModal('login')}
         onRequireLogin={() => setModal('login')}
+        mobileOpen={navOpen}
+        onCloseNav={() => setNavOpen(false)}
       />
       <main>
         {viewProfile ? (
@@ -588,7 +644,7 @@ export function App() {
             isSelf
             tab={profileTab}
             setTab={setProfileTab}
-            posts={profilePosts}
+            posts={profileTab === 'favorites' ? profileFavPosts : profilePosts}
             followList={profileFollowList}
             editForm={profileForm}
             setEditForm={setProfileForm}
@@ -600,6 +656,7 @@ export function App() {
             onSubmitProfile={submitProfile}
             onToggleFollow={toggleFollow}
             onEditProfile={() => setProfileTab('info')}
+            onCancelEdit={() => setProfileTab('posts')}
             onAvatarChange={async () => {}}
             onRemoveAvatar={() => setProfileForm(f => ({ ...f, avatarUrl: '' }))}
           />
@@ -686,6 +743,7 @@ export function App() {
             searching={searching}
             query={query}
             onExitSearch={exitSearch}
+            loading={!searching ? postsQuery.isLoading : searchQuery.isLoading}
           />
         )}
       </main>
@@ -737,6 +795,10 @@ export function App() {
             onClose={mod.close}
             onRemoveModerator={removeModerator}
             onSaveReportReasons={saveReportReasons}
+            reports={modReports}
+            reportPending={modReportPending}
+            onHandleReport={handleModReport}
+            onRefreshReports={loadModReports}
           />
         </Suspense>
       )}

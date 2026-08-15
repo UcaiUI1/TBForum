@@ -27,9 +27,10 @@ type Props = {
   searching: boolean;
   query: string;
   onExitSearch: () => void;
+  loading: boolean;
 };
 
-export function PostList({ posts, active, globalMode, activeTag, order, page, totalPages, mods, user, token, isModerator, setOrder, setSeed, setPage, onOpenPost, onVote, onEnterTag, onToggleFeature, onPostContext, onOpenUser, onNewPost, searching, query, onExitSearch }: Props) {
+export function PostList({ posts, active, globalMode, activeTag, order, page, totalPages, mods, user, token, isModerator, setOrder, setSeed, setPage, onOpenPost, onVote, onEnterTag, onToggleFeature, onPostContext, onOpenUser, onNewPost, searching, query, onExitSearch, loading }: Props) {
   return (
     <>
       <section className="hero">
@@ -50,6 +51,21 @@ export function PostList({ posts, active, globalMode, activeTag, order, page, to
         <span>{posts.length} {searching ? '条结果' : '篇讨论'}</span>
       </section>
       <section className="feed">
+        {loading && posts.length === 0 && (
+          <>
+            {[0, 1, 2, 3, 4].map(i => (
+              <div className="post skeleton-card" key={i}>
+                <div className="vote"><div className="sk sk-arrow" /><div className="sk sk-num" /></div>
+                <div className="post-body">
+                  <div className="sk sk-line w20" />
+                  <div className="sk sk-line w80" />
+                  <div className="sk sk-line w60" />
+                  <div className="sk sk-line w40" />
+                </div>
+              </div>
+            ))}
+          </>
+        )}
         {posts.map(p => (
           <article className="post" key={p.id} onContextMenu={e => onPostContext(e, p)}>
             <div className="vote">
