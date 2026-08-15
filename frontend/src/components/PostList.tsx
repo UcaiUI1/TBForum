@@ -1,6 +1,7 @@
 // 帖子列表区：hero、排序工具栏、帖子卡片、分页。支持搜索态与已点赞高亮。
 import type { Post, Forum } from '../types';
 import { time } from '../utils/format';
+import { IconComment, IconUp, IconView } from './Icons';
 
 type Props = {
   posts: Post[];
@@ -69,7 +70,7 @@ export function PostList({ posts, active, globalMode, activeTag, order, page, to
         {posts.map(p => (
           <article className="post" key={p.id} onContextMenu={e => onPostContext(e, p)}>
             <div className="vote">
-              <button className={p.upvoted ? 'voted' : ''} onClick={() => onVote(p)}>▲</button>
+              <button className={p.upvoted ? 'voted' : ''} onClick={() => onVote(p)}><IconUp size={18} /></button>
               <b>{p.upvotes}</b>
             </div>
             <div className="post-body">
@@ -92,8 +93,8 @@ export function PostList({ posts, active, globalMode, activeTag, order, page, to
                 </div>
               )}
               <div className="post-foot">
-                <span>◉ {p.views} 浏览</span>
-                <span className="comment-link" onClick={() => onOpenPost(p)}>◉ {p.comments} 评论</span>
+                <span className="icon-label"><IconView size={13} />{p.views} 浏览</span>
+                <span className="comment-link icon-label" onClick={() => onOpenPost(p)}><IconComment size={13} />{p.comments} 评论</span>
                 <button className={p.upvoted ? 'voted' : ''} onClick={() => onVote(p)}>{p.upvoted ? '✓ 已支持' : '支持这篇讨论'}</button>
                 {token && isModerator && <button className="feature-btn-sm" onClick={() => onToggleFeature(p)}>{p.featured ? '取消精华' : '设为精华'}</button>}
               </div>

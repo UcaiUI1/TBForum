@@ -11,7 +11,9 @@ public interface PostRepository extends JpaRepository<Post,Long>{
  Page<Post> findByFeaturedTrueAndDeletedFalse(Pageable p);
  List<Post> findByDeletedFalse();
  @Query("select p from Post p where p.deleted=false and (lower(p.title) like lower(concat('%',:q,'%')) or lower(p.content) like lower(concat('%',:q,'%')))") Page<Post> search(@Param("q") String q,Pageable p);
- @Query("select p from Post p where p.deleted=false and p.createdAt>=:since order by (p.upvotes + p.commentCount*0.5 + p.views*0.01) desc, p.createdAt desc") Page<Post> findHotSince(@Param("since") Instant since,Pageable p);
+ /** 热门候选：近 N 天内有互动的帖子，取前 300 条由服务层做时间衰减评分 */
+ @Query("select p from Post p where p.deleted=false and p.createdAt>=:since order by (p.upvotes + p.commentCount*2 + p.views*0.01) desc, p.createdAt desc") List<Post> findHotCandidates(@Param("since") Instant since,Pageable p);
+ @Query("select p from Post p where p.forum=:forum and p.deleted=false and p.createdAt>=:since order by (p.upvotes + p.commentCount*2 + p.views*0.01) desc, p.createdAt desc") List<Post> findHotCandidatesByForum(@Param("forum") Forum forum,@Param("since") Instant since,Pageable p);
  @Modifying @Transactional @Query("update Post p set p.views=p.views+:delta where p.id=:id") void incrementViews(@Param("id") Long id,@Param("delta") int delta);
  @Modifying @Transactional @Query("update Post p set p.upvotes=p.upvotes+:delta where p.id=:id") void incrementUpvotes(@Param("id") Long id,@Param("delta") int delta);
  @Modifying @Transactional @Query("update Post p set p.downvotes=p.downvotes+:delta where p.id=:id") void incrementDownvotes(@Param("id") Long id,@Param("delta") int delta);

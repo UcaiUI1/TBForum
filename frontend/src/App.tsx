@@ -1,10 +1,10 @@
 // 应用主组件：组装顶栏、侧边栏、主内容区与各弹窗；hash 路由实现可分享深链。
 import React, { FormEvent, Suspense, lazy, useEffect, useMemo, useRef, useState, useCallback } from 'react';
-import type { Post, Forum, Comment, UserProfile, ModalType, ReportFilter, ReportView } from './types';
+import type { Post, Forum, Comment, UserProfile, ModalType, ReportFilter, ReportView, AuditLogView } from './types';
 import { useAuth } from './contexts/AuthContext';
 import { useNotifications } from './contexts/NotificationContext';
 import {
-  authApi, forumApi, postApi, commentApi, userApi, reportApi,
+  authApi, forumApi, postApi, commentApi, userApi, reportApi, adminApi,
 } from './services/api';
 import { useForums, usePopularTags } from './hooks/useForums';
 import { usePosts, useSearch } from './hooks/usePosts';
@@ -103,6 +103,9 @@ export function App() {
   const [pendingCommentId, setPendingCommentId] = useState<number | null>(null);
   const [modReports, setModReports] = useState<ReportView[]>([]);
   const [modReportPending, setModReportPending] = useState(0);
+  const [adminAudit, setAdminAudit] = useState<AuditLogView[]>([]);
+  const [adminAuditPage, setAdminAuditPage] = useState(0);
+  const [adminAuditTotalPages, setAdminAuditTotalPages] = useState(1);
 
   // 个人中心/用户主页状态
   const [viewProfile, setViewProfile] = useState(false);
@@ -578,6 +581,16 @@ export function App() {
   }
 
   // 管理员面板
+  async function loadAudit(pg: number) {
+    if (!token) return;
+    try {
+      const r = await adminApi.audit(token, pg);
+      setAdminAudit(r.content);
+      setAdminAuditTotalPages(Math.max(1, Math.ceil(r.totalElements / 20)));
+      setAdminAuditPage(pg);
+    } catch (err) { showError(err); }
+  }
+
   async function loadReports(filter: ReportFilter, pg: number) {
     if (!token) return;
     try {
@@ -589,7 +602,24 @@ export function App() {
   function openAdminPanel() {
     admin.open();
     loadReports('PENDING', 0);
+    loadAudit(0);
     reportApi.counts(token).then(admin.setCounts).catch(e => console.warn('API:', e));
+  }
+
+  async function handleBan(username: string, days: number) {
+    try {
+      await adminApi.ban(token, username, days);
+      notify(days > 0 ? `已封禁 ${username} ${days} 天` : `已解除 ${username} 的封禁`);
+      loadAudit(0);
+    } catch (err) { showError(err); }
+  }
+
+  async function handleMute(username: string, days: number) {
+    try {
+      await adminApi.mute(token, username, days);
+      notify(days > 0 ? `已禁言 ${username} ${days} 天` : `已解除 ${username} 的禁言`);
+      loadAudit(0);
+    } catch (err) { showError(err); }
   }
 
   async function handleReport(id: number, status: 'RESOLVED' | 'DISMISSED') {
@@ -814,6 +844,13 @@ export function App() {
             setPage={(p) => { admin.setPage(p); loadReports(admin.state.filter, p); }}
             onClose={admin.close}
             onHandle={handleReport}
+            onBan={handleBan}
+            onMute={handleMute}
+            onSearchUsers={(q) => userApi.search(q, token)}
+            audit={adminAudit}
+            auditPage={adminAuditPage}
+            auditTotalPages={adminAuditTotalPages}
+            setAuditPage={loadAudit}
           />
         </Suspense>
       )}

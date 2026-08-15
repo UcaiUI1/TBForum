@@ -11,4 +11,6 @@ import jakarta.persistence.*; import java.time.Instant;
  @Column(length=500) public String bio;
  @Column(length=100) public String signature;
  public boolean deleted=false;
+ public Instant bannedUntil;
+ public Instant mutedUntil;
 }

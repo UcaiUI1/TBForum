@@ -9,6 +9,7 @@ import java.io.*; import java.awt.image.BufferedImage; import java.util.Map;
  public UploadController(UserService u,StorageService s,AppProperties p){userService=u;storage=s;props=p;}
  @PostMapping("/upload") public Map<String,String> upload(@RequestParam("file") MultipartFile file) throws IOException {
   User u=userService.current();
+  userService.requireNotRestricted(u);
   if(file.isEmpty())throw UserService.bad("文件不能为空");
   if(file.getSize()>props.getUpload().getMaxFileSize())throw UserService.bad("文件不能超过2MB");
   byte[] data=file.getBytes();

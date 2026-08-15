@@ -1,5 +1,5 @@
 // API 服务层：集中管理 fetch 请求、token 持久化与 401 失效广播
-import type { Forum, Post, Comment, Page, TagView, UserView, UserProfile, Notification, ReportReasons, ReportView, ReportFilter } from '../types';
+import type { Forum, Post, Comment, Page, TagView, UserView, UserProfile, Notification, ReportReasons, ReportView, ReportFilter, AuditLogView } from '../types';
 
 const TOKEN_KEY = 'tb-token';
 const USER_KEY = 'tb-user';
@@ -169,4 +169,14 @@ export const reportApi = {
     api<{ total: number; pending: number }>(`/api/moderator/reports/count?forum=${encodeURIComponent(forum)}`, {}, token),
   moderatorHandle: (token: string, id: number, status: 'RESOLVED' | 'DISMISSED', forum: string) =>
     api(`/api/moderator/reports/${id}?status=${status}&forum=${encodeURIComponent(forum)}`, { method: 'PATCH' }, token),
+};
+
+// ===== 管理端（用户治理 + 审计） =====
+export const adminApi = {
+  ban: (token: string, username: string, days: number) =>
+    api<UserView>(`/api/admin/users/${encodeURIComponent(username)}/ban?days=${days}`, { method: 'PATCH' }, token),
+  mute: (token: string, username: string, days: number) =>
+    api<UserView>(`/api/admin/users/${encodeURIComponent(username)}/mute?days=${days}`, { method: 'PATCH' }, token),
+  audit: (token: string, page: number) =>
+    api<Page<AuditLogView>>(`/api/admin/audit?page=${page}&size=20`, {}, token),
 };

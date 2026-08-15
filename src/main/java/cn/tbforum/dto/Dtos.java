@@ -9,7 +9,7 @@ public final class Dtos {
  public record PostInput(@NotBlank @Size(max=180) String title,@NotBlank @Size(max=20000) String content){}
  public record CommentInput(@NotBlank @Size(max=5000) String content,Long parentId){}
  public record InteractionInput(@NotNull Interaction.Kind kind){}
- public record UserView(Long id,String username,boolean verified,String avatarUrl,String bio,String signature,String role){ static public UserView of(User u){return new UserView(u.id,u.username,u.verified,u.avatarUrl,u.bio,u.signature,u.role.name());}}
+ public record UserView(Long id,String username,boolean verified,String avatarUrl,String bio,String signature,String role,Instant bannedUntil,Instant mutedUntil){ static public UserView of(User u){return new UserView(u.id,u.username,u.verified,u.avatarUrl,u.bio,u.signature,u.role.name(),u.bannedUntil,u.mutedUntil);}}
  public record UserDetailView(Long id,String username,boolean verified,String avatarUrl,String bio,String signature,long following,long followers,boolean isFollowing,boolean isSelf,boolean mutual){ static public UserDetailView of(User u,User viewer,FollowRepository follows){boolean isSelf=viewer!=null&&viewer.id.equals(u.id);boolean following=!isSelf&&viewer!=null&&follows.findByFollowerAndFollowee(viewer,u).isPresent();boolean mutual=following&&follows.findByFollowerAndFollowee(u,viewer).isPresent();return new UserDetailView(u.id,u.username,u.verified,u.avatarUrl,u.bio,u.signature,follows.countByFollower(u),follows.countByFollowee(u),following,isSelf,mutual);}}
  public record ProfileInput(@Size(min=3,max=40) @Pattern(regexp="[a-zA-Z0-9_\\u4e00-\\u9fa5]{3,40}") String username,@Size(max=2048) String avatarUrl,@Size(max=500) String bio,@Size(max=100) String signature){}
  public record ProfileUpdateView(String token,UserView user){}
@@ -22,4 +22,5 @@ public final class Dtos {
  public record CustomReasonsInput(String reason1,String reason2){}
  public record ReportInput(@NotNull Report.TargetType targetType,@NotNull Long targetId,@NotBlank @Size(max=80) String reason){}
  public record ReportView(Long id,String reporter,String targetType,Long targetId,String reason,Instant createdAt,String status,String handledBy,Instant handledAt){static public ReportView of(Report r){return new ReportView(r.id,r.reporter.username,r.targetType.name(),r.targetId,r.reason,r.createdAt,r.status.name(),r.handledBy!=null?r.handledBy.username:null,r.handledAt);}}
+ public record AuditLogView(Long id,String actor,String action,String targetType,Long targetId,String detail,Instant createdAt){static public AuditLogView of(AuditLog a){return new AuditLogView(a.id,a.actor!=null?a.actor.username:null,a.action,a.targetType,a.targetId,a.detail,a.createdAt);}}
 }

@@ -5,6 +5,7 @@ import { time } from '../utils/format';
 import { renderMd } from '../utils/markdown';
 import { MentionTextarea } from './MentionTextarea';
 import { CommentView } from './CommentView';
+import { IconComment, IconLock, IconReport, IconStar, IconUp, IconView } from './Icons';
 
 type Props = {
   viewPost: Post;
@@ -77,16 +78,16 @@ export function PostDetail(props: Props) {
           </>
         )}
         <div className="post-detail-foot">
-          <span>◉ {viewPost.views} 浏览</span>
-          <span>◌ {viewPost.comments} 评论</span>
-          <span>↑ {viewPost.upvotes} 支持</span>
-          <button className={viewPost.upvoted ? 'primary compact voted' : 'primary compact'} onClick={() => onVote(viewPost)}>{viewPost.upvoted ? '✓ 已支持' : '支持这篇讨论'}</button>
-          {token && <button className={viewPost.favorited ? 'fav-btn favorited' : 'fav-btn'} onClick={() => onToggleFavorite(viewPost)}>{viewPost.favorited ? '★ 已收藏' : '☆ 收藏'}</button>}
+          <span className="icon-label"><IconView size={14} />{viewPost.views} 浏览</span>
+          <span className="icon-label"><IconComment size={14} />{viewPost.comments} 评论</span>
+          <span className="icon-label"><IconUp size={14} />{viewPost.upvotes} 支持</span>
+          <button className={viewPost.upvoted ? 'primary compact voted' : 'primary compact'} onClick={() => onVote(viewPost)}><IconUp size={14} />{viewPost.upvoted ? '已支持' : '支持这篇讨论'}</button>
+          {token && <button className={viewPost.favorited ? 'fav-btn favorited' : 'fav-btn'} onClick={() => onToggleFavorite(viewPost)}><IconStar size={13} />{viewPost.favorited ? '已收藏' : '收藏'}</button>}
           {token && viewPost.author === user && <button className="plain" onClick={onStartEdit}>编辑</button>}
           {token && (viewPost.author === user || isModerator) && <button className="danger-btn" onClick={() => onDelete(viewPost)}>删除</button>}
           {token && isModerator && <button className="feature-btn" onClick={() => onToggleFeature(viewPost)}>{viewPost.featured ? '取消精华' : '设为精华'}</button>}
-          {token && isModerator && <button className="lock-btn" onClick={() => onToggleLock(viewPost)}>{viewPost.locked ? '🔓 解锁' : '🔒 锁帖'}</button>}
-          {token && viewPost.author !== user && <button className="report-btn" onClick={() => onOpenReport('POST', viewPost.id)}>🚩 举报</button>}
+          {token && isModerator && <button className="lock-btn" onClick={() => onToggleLock(viewPost)}><IconLock size={13} />{viewPost.locked ? '解锁' : '锁帖'}</button>}
+          {token && viewPost.author !== user && <button className="report-btn" onClick={() => onOpenReport('POST', viewPost.id)}><IconReport size={13} />举报</button>}
         </div>
       </article>
       <section className="comments-section">

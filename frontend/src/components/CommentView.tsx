@@ -5,6 +5,7 @@ import { time } from '../utils/format';
 import { renderMd } from '../utils/markdown';
 import { commentApi } from '../services/api';
 import { MentionTextarea } from './MentionTextarea';
+import { IconPin, IconReport } from './Icons';
 
 type Props = {
   c: Comment;
@@ -46,9 +47,9 @@ export function CommentView({ c, replyTo, setReplyTo, token, onUser, user, postI
         {c.edited && <span className="edited-badge">已编辑</span>}
         {token && c.author === user && !editing && <button className="reply-btn" onClick={() => { setEditContent(c.content); setEditing(true); }}>编辑</button>}
         {token && c.author === user && !editing && <button className="reply-btn del" onClick={() => onDelete(c)}>删除</button>}
-        {token && isModerator && <button className={c.pinned ? 'reply-btn active' : 'reply-btn'} onClick={() => onPin(c)}>{c.pinned ? '取消置顶' : '📌 置顶'}</button>}
+        {token && isModerator && <button className={c.pinned ? 'reply-btn active' : 'reply-btn'} onClick={() => onPin(c)}><IconPin size={12} />{c.pinned ? '取消置顶' : '置顶'}</button>}
         {token && <button className={replyTo === c.id ? 'reply-btn active' : 'reply-btn'} onClick={() => setReplyTo(replyTo === c.id ? null : c.id)}>回复</button>}
-        {token && c.author !== user && <button className="reply-btn" onClick={() => onReport('COMMENT', c.id)}>🚩</button>}
+        {token && c.author !== user && <button className="reply-btn" onClick={() => onReport('COMMENT', c.id)}><IconReport size={12} /></button>}
       </div>
       {editing ? (
         <div className="edit-form">

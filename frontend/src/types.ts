@@ -98,3 +98,13 @@ export type ReportView = {
 export type ModalType = 'login' | 'register' | 'post' | 'forum';
 
 export type ReportFilter = 'PENDING' | 'RESOLVED' | 'DISMISSED' | 'ALL';
+
+export type AuditLogView = {
+  id: number;
+  actor: string | null;
+  action: string;
+  targetType: string | null;
+  targetId: number | null;
+  detail: string | null;
+  createdAt: string;
+};
