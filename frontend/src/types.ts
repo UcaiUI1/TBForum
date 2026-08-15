@@ -24,6 +24,7 @@ export type Post = {
   locked: boolean;
   edited: boolean;
   editedAt: string | null;
+  upvoted: boolean;
   favorited: boolean;
   tags?: string[];
 };
@@ -41,7 +42,7 @@ export type Comment = {
   pinned: boolean;
 };
 
-export type Page<T> = { content: T[]; totalElements: number };
+export type Page<T> = { content: T[]; totalElements: number; totalPages: number; number: number };
 
 export type TagView = { id: number; name: string; postCount: number };
 

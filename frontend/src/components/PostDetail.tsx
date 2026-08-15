@@ -27,6 +27,10 @@ type Props = {
   onSubmitComment: (e: FormEvent<HTMLFormElement>) => void;
   onReloadComments: () => void;
   onPinComment: (c: Comment) => void;
+  onDeleteComment: (c: Comment) => void;
+  commentsHasMore: boolean;
+  commentsLoadingMore: boolean;
+  onLoadMoreComments: () => void;
   onSaveEdit: () => void;
   onCancelEdit: () => void;
   onStartEdit: () => void;
@@ -39,7 +43,7 @@ type Props = {
 };
 
 export function PostDetail(props: Props) {
-  const { viewPost, comments, replyTo, setReplyTo, commentContent, setCommentContent, token, user, isModerator, onUser, onClose, onVote, onToggleFavorite, onToggleFeature, onToggleLock, onDelete, onOpenReport, onSubmitComment, onReloadComments, onPinComment, editPost, editPostTitle, setEditPostTitle, editPostContent, setEditPostContent, onStartEdit, onSaveEdit, onCancelEdit, onError } = props;
+  const { viewPost, comments, replyTo, setReplyTo, commentContent, setCommentContent, token, user, isModerator, onUser, onClose, onVote, onToggleFavorite, onToggleFeature, onToggleLock, onDelete, onDeleteComment, commentsHasMore, commentsLoadingMore, onLoadMoreComments, onOpenReport, onSubmitComment, onReloadComments, onPinComment, editPost, editPostTitle, setEditPostTitle, editPostContent, setEditPostContent, onStartEdit, onSaveEdit, onCancelEdit, onError } = props;
   const renderedPostHtml = useMemo(() => renderMd(viewPost.content), [viewPost.content]);
 
   return (
@@ -76,7 +80,7 @@ export function PostDetail(props: Props) {
           <span>◉ {viewPost.views} 浏览</span>
           <span>◌ {viewPost.comments} 评论</span>
           <span>↑ {viewPost.upvotes} 支持</span>
-          <button className="primary compact" onClick={() => onVote(viewPost)}>支持这篇讨论</button>
+          <button className={viewPost.upvoted ? 'primary compact voted' : 'primary compact'} onClick={() => onVote(viewPost)}>{viewPost.upvoted ? '✓ 已支持' : '支持这篇讨论'}</button>
           {token && <button className={viewPost.favorited ? 'fav-btn favorited' : 'fav-btn'} onClick={() => onToggleFavorite(viewPost)}>{viewPost.favorited ? '★ 已收藏' : '☆ 收藏'}</button>}
           {token && viewPost.author === user && <button className="plain" onClick={onStartEdit}>编辑</button>}
           {token && (viewPost.author === user || isModerator) && <button className="danger-btn" onClick={() => onDelete(viewPost)}>删除</button>}
@@ -98,10 +102,17 @@ export function PostDetail(props: Props) {
         )}
         <div className="comment-tree">
           {comments.map(c => (
-            <CommentView key={c.id} c={c} replyTo={replyTo} setReplyTo={setReplyTo} token={token} onUser={onUser} user={user} postId={viewPost.id} onReload={onReloadComments} onError={onError} onPin={onPinComment} onReport={onOpenReport} isModerator={isModerator} />
+            <CommentView key={c.id} c={c} replyTo={replyTo} setReplyTo={setReplyTo} token={token} onUser={onUser} user={user} postId={viewPost.id} onReload={onReloadComments} onError={onError} onPin={onPinComment} onReport={onOpenReport} onDelete={onDeleteComment} isModerator={isModerator} />
           ))}
           {!comments.length && <p className="no-comments">还没有评论，成为第一个发言的人。</p>}
         </div>
+        {commentsHasMore && (
+          <div className="comments-more">
+            <button className="page-btn" disabled={commentsLoadingMore} onClick={onLoadMoreComments}>
+              {commentsLoadingMore ? '加载中…' : '加载更多评论'}
+            </button>
+          </div>
+        )}
       </section>
     </section>
   );

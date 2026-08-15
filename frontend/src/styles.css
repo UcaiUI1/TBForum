@@ -236,3 +236,23 @@
 /* 评论举报按钮（小图标） */
 .comment-head .reply-btn[title],.comment-head button:last-child{font-size:12px}
 
+/* 已支持状态 */
+.vote button.voted{color:#7bf0d5;text-shadow:0 0 10px #4ed9bf55}
+.post-foot button.voted{color:#7bf0d5;font-weight:600}
+.post-detail-foot .primary.voted{background:#4ed9bf;box-shadow:0 0 24px #4ed9bf66}
+/* 删除评论 */
+.reply-btn.del{color:#e07070}
+.reply-btn.del:hover{color:#ff8888}
+/* 编辑器工具条 */
+.editor-bar{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:10px 0 2px}
+.editor-tabs{display:flex;gap:3px;background:#ffffff07;padding:3px;border-radius:7px}
+.editor-tabs button{background:none;border-radius:5px;color:#8fa3b8;padding:4px 12px;font-size:12px}
+.editor-tabs button.selected{background:#1b3a50;color:#8bf4dc}
+.editor-upload{display:inline-block;background:#ffffff08;border:1px dashed #ffffff2a;color:#c5d4e8;border-radius:7px;padding:5px 12px;font-size:12px;cursor:pointer;transition:.2s}
+.editor-upload:hover{border-color:#72f0d4;color:#81f4dc}
+.preview-body{background:#071421;border:1px solid #294156;border-radius:8px;padding:14px 16px;margin:10px 0;min-height:120px;max-height:360px;overflow-y:auto}
+.preview-empty{color:#617895;text-align:center;padding:30px 10px}
+.draft-hint{color:#f3d981}
+.draft-hint .text-link{color:#8ef5dc}
+/* 评论加载更多 */
+.comments-more{display:flex;justify-content:center;padding:14px 0 4px}

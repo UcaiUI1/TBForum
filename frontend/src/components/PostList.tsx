@@ -1,4 +1,4 @@
-// 帖子列表区：hero、排序工具栏、帖子卡片、分页
+// 帖子列表区：hero、排序工具栏、帖子卡片、分页。支持搜索态与已点赞高亮。
 import type { Post, Forum } from '../types';
 import { time } from '../utils/format';
 
@@ -24,19 +24,22 @@ type Props = {
   onPostContext: (e: React.MouseEvent, p: Post) => void;
   onOpenUser: (username: string) => void;
   onNewPost: () => void;
+  searching: boolean;
+  query: string;
+  onExitSearch: () => void;
 };
 
-export function PostList({ posts, active, globalMode, activeTag, order, page, totalPages, mods, user, token, isModerator, setOrder, setSeed, setPage, onOpenPost, onVote, onEnterTag, onToggleFeature, onPostContext, onOpenUser, onNewPost }: Props) {
+export function PostList({ posts, active, globalMode, activeTag, order, page, totalPages, mods, user, token, isModerator, setOrder, setSeed, setPage, onOpenPost, onVote, onEnterTag, onToggleFeature, onPostContext, onOpenUser, onNewPost, searching, query, onExitSearch }: Props) {
   return (
     <>
       <section className="hero">
         <div>
-          <p className="eyebrow">{globalMode ? 'COMMUNITY / GLOBAL FEED' : activeTag ? `COMMUNITY / TAG #${activeTag.toUpperCase()}` : 'COMMUNITY / ' + (active?.slug?.toUpperCase() || 'LOADING')}</p>
-          <h1>{globalMode ? '全站动态' : activeTag ? `#${activeTag}` : active?.name || '发现正在发生的讨论'}</h1>
-          <p>{globalMode ? '汇集所有版块的最新讨论，发现值得参与的话题。' : activeTag ? `带有 #${activeTag} 标签的帖子集合。` : active?.description || '每个想法都值得一处安静的空间。'}</p>
+          <p className="eyebrow">{searching ? 'SEARCH / RESULTS' : globalMode ? 'COMMUNITY / GLOBAL FEED' : activeTag ? `COMMUNITY / TAG #${activeTag.toUpperCase()}` : 'COMMUNITY / ' + (active?.slug?.toUpperCase() || 'LOADING')}</p>
+          <h1>{searching ? `搜索「${query}」` : globalMode ? '全站动态' : activeTag ? `#${activeTag}` : active?.name || '发现正在发生的讨论'}</h1>
+          <p>{searching ? '为你找到的相关讨论。' : globalMode ? '汇集所有版块的最新讨论，发现值得参与的话题。' : activeTag ? `带有 #${activeTag} 标签的帖子集合。` : active?.description || '每个想法都值得一处安静的空间。'}</p>
           {token && active && !globalMode && !activeTag && <span className="role-badge">{active.owner.username === user ? '版主' : mods.includes(user) ? '小版主' : '成员'}</span>}
         </div>
-        <div className="hero-mark">{globalMode ? '◉' : activeTag ? '#' : '◌'}</div>
+        <div className="hero-mark">{searching ? '⌕' : globalMode ? '◉' : activeTag ? '#' : '◉'}</div>
       </section>
       <section className="toolbar">
         <div className="tabs">
@@ -44,13 +47,13 @@ export function PostList({ posts, active, globalMode, activeTag, order, page, to
             <button key={key} className={order === key ? 'selected' : ''} onClick={() => { if (key === 'fate') setSeed(String(Math.floor(Math.random() * (2 ** 31 - 1)))); setPage(0); setOrder(key); }}>{label}</button>
           ))}
         </div>
-        <span>{posts.length} 篇讨论</span>
+        <span>{posts.length} {searching ? '条结果' : '篇讨论'}</span>
       </section>
       <section className="feed">
         {posts.map(p => (
           <article className="post" key={p.id} onContextMenu={e => onPostContext(e, p)}>
             <div className="vote">
-              <button onClick={() => onVote(p)}>↑</button>
+              <button className={p.upvoted ? 'voted' : ''} onClick={() => onVote(p)}>▲</button>
               <b>{p.upvotes}</b>
             </div>
             <div className="post-body">
@@ -74,8 +77,8 @@ export function PostList({ posts, active, globalMode, activeTag, order, page, to
               )}
               <div className="post-foot">
                 <span>◉ {p.views} 浏览</span>
-                <span className="comment-link" onClick={() => onOpenPost(p)}>◌ {p.comments} 评论</span>
-                <button onClick={() => onVote(p)}>支持这篇讨论 →</button>
+                <span className="comment-link" onClick={() => onOpenPost(p)}>◉ {p.comments} 评论</span>
+                <button className={p.upvoted ? 'voted' : ''} onClick={() => onVote(p)}>{p.upvoted ? '✓ 已支持' : '支持这篇讨论'}</button>
                 {token && isModerator && <button className="feature-btn-sm" onClick={() => onToggleFeature(p)}>{p.featured ? '取消精华' : '设为精华'}</button>}
               </div>
             </div>
@@ -83,10 +86,10 @@ export function PostList({ posts, active, globalMode, activeTag, order, page, to
         ))}
         {!posts.length && (
           <div className="empty">
-            <div>◌</div>
-            <h2>这里还很安静</h2>
-            <p>成为第一个留下想法的人吧。</p>
-            <button className="primary" onClick={onNewPost}>发布帖子</button>
+            <div>{searching ? '⌕' : '◉'}</div>
+            <h2>{searching ? '没有找到相关内容' : '这里还很安静'}</h2>
+            <p>{searching ? '换个关键词试试，或者浏览全站动态。' : '成为第一个留下想法的人吧。'}</p>
+            {searching ? <button className="primary" onClick={onExitSearch}>返回列表</button> : <button className="primary" onClick={onNewPost}>发布帖子</button>}
           </div>
         )}
       </section>

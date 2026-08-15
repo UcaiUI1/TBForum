@@ -1,4 +1,4 @@
-// 应用主组件：组装顶栏、侧边栏、主内容区与各弹窗
+// 应用主组件：组装顶栏、侧边栏、主内容区与各弹窗；hash 路由实现可分享深链。
 import React, { FormEvent, Suspense, lazy, useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import type { Post, Forum, Comment, UserProfile, ModalType, ReportFilter } from './types';
 import { useAuth } from './contexts/AuthContext';
@@ -24,11 +24,49 @@ import { ConfirmModal } from './components/ConfirmModal';
 import { ContextMenu } from './components/ContextMenu';
 import { ReportModal } from './components/ReportModal';
 
-// 代码分割：管理面板懒加载，减少首屏体积
+// 代码分割：管理面板懒加载，减小首屏体积
 const ModPanel = lazy(() => import('./components/ModPanel').then(m => ({ default: m.ModPanel })));
 const AdminPanel = lazy(() => import('./components/AdminPanel').then(m => ({ default: m.AdminPanel })));
 
 const PAGE_SIZE = 10;
+const DRAFT_KEY = 'tb-post-draft';
+
+type Route =
+  | { kind: 'global' }
+  | { kind: 'forum'; slug: string }
+  | { kind: 'tag'; name: string }
+  | { kind: 'post'; id: number }
+  | { kind: 'user'; username: string }
+  | { kind: 'profile' };
+
+function parseHash(): Route | null {
+  const h = window.location.hash.replace(/^#\/?/, '');
+  if (!h) return null;
+  const parts = h.split('/').map(decodeURIComponent);
+  switch (parts[0]) {
+    case 'global': return { kind: 'global' };
+    case 'forum': return parts[1] ? { kind: 'forum', slug: parts[1] } : null;
+    case 'tag': return parts[1] ? { kind: 'tag', name: parts[1] } : null;
+    case 'post': {
+      const id = Number(parts[1]);
+      return Number.isInteger(id) && id > 0 ? { kind: 'post', id } : null;
+    }
+    case 'u': return parts[1] ? { kind: 'user', username: parts[1] } : null;
+    case 'profile': return { kind: 'profile' };
+    default: return null;
+  }
+}
+
+function loadDraft(): { title: string; content: string } {
+  try {
+    const raw = localStorage.getItem(DRAFT_KEY);
+    if (raw) {
+      const d = JSON.parse(raw);
+      if (typeof d.title === 'string' && typeof d.content === 'string') return { title: d.title, content: d.content };
+    }
+  } catch { /* ignore */ }
+  return { title: '', content: '' };
+}
 
 export function App() {
   const { token, user, verified, isAdmin, login, logout, setVerified } = useAuth();
@@ -38,6 +76,7 @@ export function App() {
   const [active, setActive] = useState<Forum | null>(null);
   const [globalMode, setGlobalMode] = useState(false);
   const [activeTag, setActiveTag] = useState<string | null>(null);
+  const [pendingSlug, setPendingSlug] = useState<string | null>(null);
   const [order, setOrder] = useState('latest');
   const [page, setPage] = useState(0);
   const [seed, setSeed] = useState(() => String(Math.floor(Math.random() * (2 ** 31 - 1))));
@@ -80,10 +119,10 @@ export function App() {
   const displayedPosts = searching ? (searchQuery.data?.content ?? []) : posts;
   const displayedTotalPages = searching ? (searchQuery.data ? Math.ceil(searchQuery.data.totalElements / PAGE_SIZE) : 0) : totalPages;
 
-  const postDetailQuery = usePostDetail(viewPostId);
+  const postDetailQuery = usePostDetail(viewPostId, token);
   const viewPost = viewPostId ? (postDetailQuery.data ?? null) : null;
-  const commentsHook = useComments(viewPostId);
-  const comments = commentsHook.query.data ?? [];
+  const commentsQuery = useComments(viewPostId);
+  const comments = commentsQuery.query.data?.pages.flatMap(p => p.content) ?? [];
 
   const profilePosts = useUserPosts(viewProfile ? user : null).data ?? [];
   const profileFavPosts = useMyFavorites(token).data ?? [];
@@ -96,12 +135,100 @@ export function App() {
   const mod = useModState();
   const admin = useAdminState();
 
+  const showError = useCallback((e: unknown) => {
+    setNotice(e instanceof Error ? e.message : '发生未知错误');
+    if (noticeTimer.current) clearTimeout(noticeTimer.current);
+    noticeTimer.current = window.setTimeout(() => setNotice(''), 3500);
+  }, []);
+
+  const notify = useCallback((msg: string) => {
+    setNotice(msg);
+    if (noticeTimer.current) clearTimeout(noticeTimer.current);
+    noticeTimer.current = window.setTimeout(() => setNotice(''), 3500);
+  }, []);
+
+  // ===== hash 路由 =====
+  const navigate = useCallback((hash: string) => {
+    if (window.location.hash !== hash) window.location.hash = hash;
+  }, []);
+
+  const listHash = useCallback(() => {
+    if (activeTag) return `#/tag/${encodeURIComponent(activeTag)}`;
+    if (globalMode) return '#/global';
+    if (active) return `#/forum/${active.slug}`;
+    return '#/';
+  }, [activeTag, globalMode, active]);
+
+  const showProfile = useCallback(() => {
+    if (!user) return;
+    setViewUser(null);
+    setViewPostId(null);
+    setViewProfile(true);
+    setProfileTab('info');
+    userApi.profile(user, token).then(d => setProfileForm(d)).catch(showError);
+  }, [user, token, showError]);
+
+  const showUser = useCallback((username: string) => {
+    setViewProfile(false);
+    setViewPostId(null);
+    setUserTab('posts');
+    userApi.profile(username, token).then(d => setViewUser(d)).catch(showError);
+  }, [token, showError]);
+
+  const applyRoute = useCallback((r: Route | null) => {
+    if (!r) return;
+    setSearching(false);
+    switch (r.kind) {
+      case 'global':
+        setGlobalMode(true); setActive(null); setActiveTag(null); setViewPostId(null); setViewProfile(false); setViewUser(null); setEditPost(false); setPage(0); setOrder('latest');
+        break;
+      case 'forum': {
+        setGlobalMode(false); setActiveTag(null); setViewPostId(null); setViewProfile(false); setViewUser(null); setEditPost(false); setPage(0); setOrder('latest');
+        const f = forums.find(x => x.slug === r.slug);
+        if (f) setActive(f); else setPendingSlug(r.slug);
+        break;
+      }
+      case 'tag':
+        setActiveTag(r.name); setGlobalMode(false); setActive(null); setViewPostId(null); setViewProfile(false); setViewUser(null); setEditPost(false); setPage(0); setOrder('latest');
+        break;
+      case 'post':
+        setViewPostId(r.id); setViewProfile(false); setViewUser(null); setReplyTo(null); setEditPost(false); setCommentContent('');
+        break;
+      case 'user':
+        showUser(r.username);
+        break;
+      case 'profile':
+        showProfile();
+        break;
+    }
+  }, [forums, showProfile, showUser]);
+
+  const applyRouteRef = useRef(applyRoute);
+  applyRouteRef.current = applyRoute;
+
+  // 首次挂载 + hash 变化时应用路由
+  useEffect(() => {
+    const onHash = () => applyRouteRef.current(parseHash());
+    onHash();
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
+  }, []);
+
+  // 版块数据到达后解析路由中的 slug
+  useEffect(() => {
+    if (pendingSlug && forums.length) {
+      const f = forums.find(x => x.slug === pendingSlug);
+      if (f) { setActive(f); setGlobalMode(false); setActiveTag(null); setViewPostId(null); setViewProfile(false); setViewUser(null); }
+      setPendingSlug(null);
+    }
+  }, [pendingSlug, forums]);
+
   // 通知点击 → 跳转帖子
   useEffect(() => {
     setOnNotifClick(async (n) => {
-      if (n.postId) { setViewProfile(false); setViewUser(null); setViewPostId(n.postId); }
+      if (n.postId) { setSearching(false); navigate(`#/post/${n.postId}`); }
     });
-  }, [setOnNotifClick]);
+  }, [setOnNotifClick, navigate]);
 
   // 右键菜单外部点击关闭
   useEffect(() => {
@@ -116,9 +243,12 @@ export function App() {
     return () => { document.removeEventListener('mousedown', h); window.removeEventListener('scroll', h); window.removeEventListener('resize', h); };
   }, [ctxMenu]);
 
-  // 初始化版块
+  // 初始化版块（无 hash 时默认第一个）并规范化 URL
   useEffect(() => {
-    if (forums.length && !active && !globalMode && !activeTag) setActive(forums[0]);
+    if (forums.length && !active && !globalMode && !activeTag) {
+      setActive(forums[0]);
+      if (!window.location.hash) history.replaceState(null, '', `#/forum/${forums[0].slug}`);
+    }
   }, [forums, active, globalMode, activeTag]);
 
   // 拉取版主列表
@@ -127,22 +257,24 @@ export function App() {
     forumApi.moderators(active.slug).then(r => setMods(r.map(m => m.username))).catch(e => { console.warn('API:', e); setMods([]); });
   }, [active?.slug]);
 
-  const showError = useCallback((e: unknown) => {
-    setNotice(e instanceof Error ? e.message : '发生未知错误');
-    if (noticeTimer.current) clearTimeout(noticeTimer.current);
-    noticeTimer.current = window.setTimeout(() => setNotice(''), 3500);
-  }, []);
-
-  const notify = useCallback((msg: string) => {
-    setNotice(msg);
-    if (noticeTimer.current) clearTimeout(noticeTimer.current);
-    noticeTimer.current = window.setTimeout(() => setNotice(''), 3500);
-  }, []);
+  // 发帖草稿自动保存
+  useEffect(() => {
+    if (!modal) return;
+    const t = window.setTimeout(() => {
+      try { localStorage.setItem(DRAFT_KEY, JSON.stringify(postForm)); } catch { /* ignore */ }
+    }, 400);
+    return () => clearTimeout(t);
+  }, [postForm, modal]);
 
   // 导航
-  const enterGlobal = () => { setGlobalMode(true); setActive(null); setActiveTag(null); setPage(0); setOrder('latest'); setSearching(false); };
-  const enterTag = (tag: string) => { setActiveTag(tag); setGlobalMode(false); setActive(null); setPage(0); setOrder('latest'); setSearching(false); };
-  const enterForum = (f: Forum) => { setGlobalMode(false); setActiveTag(null); setActive(f); setPage(0); setSearching(false); };
+  const enterGlobal = () => navigate('#/global');
+  const enterForum = (f: Forum) => navigate(`#/forum/${f.slug}`);
+  const enterTag = (tag: string) => navigate(`#/tag/${encodeURIComponent(tag)}`);
+  const openPost = (p: Post) => navigate(`#/post/${p.id}`);
+  const openUser = (username: string) => navigate(`#/u/${encodeURIComponent(username)}`);
+  const openProfile = () => navigate('#/profile');
+  const closePost = () => navigate(listHash());
+  const exitSearch = () => { setSearching(false); setQuery(''); navigate(listHash()); };
 
   const isModerator = !!active && (active.owner.username === user || mods.includes(user));
   const canDelete = (p: Post) => !!token && (p.author === user || isModerator);
@@ -169,6 +301,13 @@ export function App() {
   }
 
   // 帖子操作
+  function openPostModal() {
+    if (!token) { setModal('login'); return; }
+    if (!active) { notify('请先创建一个版块'); setModal('forum'); return; }
+    setPostForm(loadDraft());
+    setModal('post');
+  }
+
   async function submitPost(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (!active) return;
@@ -176,6 +315,7 @@ export function App() {
       await postApi.create(token, active.slug, postForm);
       setModal(null);
       setPostForm({ title: '', content: '' });
+      try { localStorage.removeItem(DRAFT_KEY); } catch { /* ignore */ }
       postsQuery.refetch();
       notify('帖子已发布');
     } catch (err) { showError(err); }
@@ -195,8 +335,7 @@ export function App() {
   async function vote(p: Post) {
     if (!token) { setModal('login'); return; }
     try {
-      const updated = await postApi.interact(token, p.id, 'UP');
-      // 直接更新缓存（避免重新拉取触发浏览数+1）
+      await postApi.interact(token, p.id, 'UP');
       postsQuery.refetch();
       if (viewPostId === p.id) postDetailQuery.refetch();
     } catch (err) { showError(err); }
@@ -205,10 +344,10 @@ export function App() {
   async function doDelete() {
     if (!confirmDel) return;
     try {
-      await postApi.delete(token, confirmDel.id);
       const id = confirmDel.id;
       setConfirmDel(null);
-      if (viewPostId === id) { setViewPostId(null); }
+      await postApi.delete(token, id);
+      if (viewPostId === id) { setViewPostId(null); navigate(listHash()); }
       postsQuery.refetch();
       notify('帖子已删除');
     } catch (err) { showError(err); }
@@ -249,15 +388,7 @@ export function App() {
     setCtxMenu({ x: e.clientX, y: e.clientY, p });
   };
 
-  // 帖子详情
-  const openPost = (p: Post) => {
-    setViewPostId(p.id);
-    setReplyTo(null);
-    setEditPost(false);
-    setCommentContent('');
-  };
-  const closePost = () => { setViewPostId(null); setReplyTo(null); setEditPost(false); };
-
+  const closePostView = () => { closePost(); };
   const startEditPost = () => {
     if (!viewPost) return;
     setEditPostTitle(viewPost.title);
@@ -286,7 +417,7 @@ export function App() {
       await commentApi.create(token, viewPost.id, body);
       setReplyTo(null);
       setCommentContent('');
-      commentsHook.invalidate();
+      commentsQuery.invalidate();
       postDetailQuery.refetch();
       notify('评论已发表');
     } catch (err) { showError(err); }
@@ -296,26 +427,33 @@ export function App() {
     if (!token || !viewPost) return;
     try {
       await commentApi.pin(token, viewPost.id, c.id, !c.pinned);
-      commentsHook.invalidate();
+      commentsQuery.invalidate();
       notify(c.pinned ? '已取消置顶' : '评论已置顶');
     } catch (err) { showError(err); }
   }
 
-  // 搜索
-  async function search(e: FormEvent) {
+  async function deleteComment(c: Comment) {
+    if (!token || !viewPost) return;
+    if (!window.confirm('确定删除这条评论吗？')) return;
+    try {
+      await commentApi.remove(token, viewPost.id, c.id);
+      commentsQuery.invalidate();
+      postDetailQuery.refetch();
+      notify('评论已删除');
+    } catch (err) { showError(err); }
+  }
+
+  // 搜索（游客可用，后端 /api/search 已 permitAll）
+  function search(e: FormEvent) {
     e.preventDefault();
     if (!query.trim()) return;
-    if (!token) { setModal('login'); return; }
     setPage(0);
     setSearching(true);
   }
 
   // 个人中心
-  function openProfile() {
-    setViewProfile(true);
-    setViewUser(null);
-    setProfileTab('info');
-    userApi.profile(user, token).then(d => setProfileForm(d)).catch(showError);
+  function openProfileSelf() {
+    navigate('#/profile');
   }
 
   async function submitProfile(e: FormEvent<HTMLFormElement>) {
@@ -325,16 +463,9 @@ export function App() {
       if (r.token) { login(r.token, r.user.username); }
       setVerified(r.user.verified);
       setViewProfile(false);
+      navigate(listHash());
       notify('个人资料已更新');
     } catch (err) { showError(err); }
-  }
-
-  // 用户主页
-  function openUser(username: string) {
-    setViewPostId(null);
-    setViewProfile(false);
-    setUserTab('posts');
-    userApi.profile(username, token).then(d => setViewUser(d)).catch(showError);
   }
 
   async function toggleFollow() {
@@ -418,6 +549,8 @@ export function App() {
     } catch (err) { showError(err); }
   }
 
+  const draftActive = !!(postForm.title.trim() || postForm.content.trim());
+
   return (
     <div className="app">
       <div className="aurora a1" />
@@ -427,14 +560,10 @@ export function App() {
         setQuery={setQuery}
         onSearch={search}
         onEnterGlobal={enterGlobal}
-        onOpenProfile={openProfile}
+        onOpenProfile={openProfileSelf}
         onOpenAdminPanel={openAdminPanel}
         onRequireLogin={() => setModal('login')}
-        onOpenPost={() => {
-          if (!token) { setModal('login'); return; }
-          if (!active) { notify('请先创建一个版块'); setModal('forum'); return; }
-          setModal('post');
-        }}
+        onOpenPost={openPostModal}
         onCreateForum={() => token ? setModal('forum') : setModal('login')}
         onVerify={doVerify}
       />
@@ -448,7 +577,7 @@ export function App() {
         onEnterGlobal={enterGlobal}
         onEnterForum={enterForum}
         onEnterTag={enterTag}
-        onExitTag={() => { setActiveTag(null); setActive(forums[0] || null); setPage(0); }}
+        onExitTag={() => navigate(listHash())}
         onCreateForum={() => token ? setModal('forum') : setModal('login')}
         onRequireLogin={() => setModal('login')}
       />
@@ -465,7 +594,7 @@ export function App() {
             setEditForm={setProfileForm}
             token={token}
             onError={showError}
-            onBack={() => setViewProfile(false)}
+            onBack={() => navigate(listHash())}
             onOpenPost={openPost}
             onOpenUser={openUser}
             onSubmitProfile={submitProfile}
@@ -486,12 +615,12 @@ export function App() {
             setEditForm={() => {}}
             token={token}
             onError={showError}
-            onBack={() => setViewUser(null)}
+            onBack={() => navigate(listHash())}
             onOpenPost={openPost}
             onOpenUser={openUser}
             onSubmitProfile={async () => {}}
             onToggleFollow={toggleFollow}
-            onEditProfile={() => { setViewUser(null); openProfile(); }}
+            onEditProfile={() => { navigate('#/profile'); }}
             onAvatarChange={async () => {}}
             onRemoveAvatar={() => {}}
           />
@@ -507,7 +636,7 @@ export function App() {
             user={user}
             isModerator={isModerator}
             onUser={openUser}
-            onClose={closePost}
+            onClose={closePostView}
             onVote={vote}
             onToggleFavorite={toggleFavorite}
             onToggleFeature={toggleFeature}
@@ -515,8 +644,12 @@ export function App() {
             onDelete={(p) => setConfirmDel(p)}
             onOpenReport={openReport}
             onSubmitComment={submitComment}
-            onReloadComments={commentsHook.invalidate}
+            onReloadComments={commentsQuery.invalidate}
             onPinComment={togglePinComment}
+            onDeleteComment={deleteComment}
+            commentsHasMore={!!commentsQuery.query.hasNextPage}
+            commentsLoadingMore={commentsQuery.query.isFetchingNextPage}
+            onLoadMoreComments={commentsQuery.query.fetchNextPage}
             editPost={editPost}
             editPostTitle={editPostTitle}
             setEditPostTitle={setEditPostTitle}
@@ -549,16 +682,15 @@ export function App() {
             onToggleFeature={toggleFeature}
             onPostContext={onPostContext}
             onOpenUser={openUser}
-            onNewPost={() => {
-              if (!token) { setModal('login'); return; }
-              if (!active) { notify('请先创建一个版块'); setModal('forum'); return; }
-              setModal('post');
-            }}
+            onNewPost={openPostModal}
+            searching={searching}
+            query={query}
+            onExitSearch={exitSearch}
           />
         )}
       </main>
 
-      {notice && <div className="toast" role="alert" aria-live="polite">✦ {notice}</div>}
+      {notice && <div className="toast" role="alert" aria-live="polite">✓ {notice}</div>}
       <ConfirmModal post={confirmDel} onClose={() => setConfirmDel(null)} onConfirm={doDelete} />
       <ContextMenu
         ctx={ctxMenu}
@@ -580,6 +712,8 @@ export function App() {
           setPostForm={setPostForm}
           token={token}
           onError={showError}
+          draftActive={modal === 'post' && draftActive}
+          onClearDraft={() => { try { localStorage.removeItem(DRAFT_KEY); } catch { /* ignore */ } setPostForm({ title: '', content: '' }); }}
         />
       )}
       <ReportModal

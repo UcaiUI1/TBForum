@@ -92,7 +92,7 @@ export const postApi = {
   byTag: (tag: string, order: string, page: number, seed: string) =>
     api<Page<Post>>(`/api/tags/${encodeURIComponent(tag)}/posts?order=${order}&size=10&page=${page}${order === 'fate' ? `&seed=${seed}` : ''}`),
   search: (q: string) => api<Page<Post>>(`/api/search?q=${encodeURIComponent(q)}&size=10&page=0`),
-  detail: (id: number) => api<Post>(`/api/posts/${id}`),
+  detail: (id: number, token = '') => api<Post>(`/api/posts/${id}`, {}, token),
   create: (token: string, slug: string, body: { title: string; content: string }) =>
     api<Post>(`/api/forums/${slug}/posts`, { method: 'POST', body: JSON.stringify(body) }, token),
   edit: (token: string, id: number, body: { title: string; content: string }) =>
@@ -115,13 +115,15 @@ export const postApi = {
 
 // ===== 评论 =====
 export const commentApi = {
-  tree: (postId: number) => api<Page<Comment>>(`/api/posts/${postId}/comments`),
+  tree: (postId: number, page = 0, size = 20) => api<Page<Comment>>(`/api/posts/${postId}/comments?page=${page}&size=${size}`),
   create: (token: string, postId: number, body: { content: string; parentId?: number }) =>
     api(`/api/posts/${postId}/comments`, { method: 'POST', body: JSON.stringify(body) }, token),
   edit: (token: string, postId: number, commentId: number, content: string) =>
     api(`/api/posts/${postId}/comments/${commentId}`, { method: 'PATCH', body: JSON.stringify({ content }) }, token),
   pin: (token: string, postId: number, commentId: number, value: boolean) =>
     api(`/api/posts/${postId}/comments/${commentId}/pinned?value=${value}`, { method: 'PATCH' }, token),
+  remove: (token: string, postId: number, commentId: number) =>
+    api(`/api/posts/${postId}/comments/${commentId}`, { method: 'DELETE' }, token),
 };
 
 // ===== 用户 =====

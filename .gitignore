@@ -12,6 +12,10 @@ outputs/
 # 日志
 *.log
 
+# TypeScript 构建缓存与 tsc -b 生成物
+*.tsbuildinfo
+frontend/vite.config.js
+
 # IDE
 .idea/
 .vscode/

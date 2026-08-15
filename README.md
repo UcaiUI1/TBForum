@@ -45,9 +45,9 @@ mvn spring-boot:run
 
 ```powershell
 cd frontend
-npm run build
+npm run build:deploy
 ```
-产物默认输出到 `frontend/dist/`，需手动复制到 `src/main/resources/static/` 由 Spring Boot 静态托管（生产同源部署，前后端同端口）。
+`build:deploy` 会执行构建并把产物自动同步到 `src/main/resources/static/`，由 Spring Boot 静态托管（生产同源部署，前后端同端口）。
 
 ## 核心功能
 

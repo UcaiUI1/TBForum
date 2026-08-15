@@ -18,10 +18,11 @@ type Props = {
   onError: (e: unknown) => void;
   onPin: (c: Comment) => void;
   onReport: (type: 'POST' | 'COMMENT', id: number) => void;
+  onDelete: (c: Comment) => void;
   isModerator: boolean;
 };
 
-export function CommentView({ c, replyTo, setReplyTo, token, onUser, user, postId, onReload, onError, onPin, onReport, isModerator }: Props) {
+export function CommentView({ c, replyTo, setReplyTo, token, onUser, user, postId, onReload, onError, onPin, onReport, onDelete, isModerator }: Props) {
   const [editing, setEditing] = useState(false);
   const [editContent, setEditContent] = useState(c.content);
 
@@ -44,6 +45,7 @@ export function CommentView({ c, replyTo, setReplyTo, token, onUser, user, postI
         <time>{time(c.createdAt)}</time>
         {c.edited && <span className="edited-badge">已编辑</span>}
         {token && c.author === user && !editing && <button className="reply-btn" onClick={() => { setEditContent(c.content); setEditing(true); }}>编辑</button>}
+        {token && c.author === user && !editing && <button className="reply-btn del" onClick={() => onDelete(c)}>删除</button>}
         {token && isModerator && <button className={c.pinned ? 'reply-btn active' : 'reply-btn'} onClick={() => onPin(c)}>{c.pinned ? '取消置顶' : '📌 置顶'}</button>}
         {token && <button className={replyTo === c.id ? 'reply-btn active' : 'reply-btn'} onClick={() => setReplyTo(replyTo === c.id ? null : c.id)}>回复</button>}
         {token && c.author !== user && <button className="reply-btn" onClick={() => onReport('COMMENT', c.id)}>🚩</button>}
@@ -60,7 +62,7 @@ export function CommentView({ c, replyTo, setReplyTo, token, onUser, user, postI
         <div className="comment-text markdown-body" dangerouslySetInnerHTML={{ __html: renderMd(c.content) }} />
       )}
       {c.children.length > 0 && c.children.map(ch => (
-        <CommentView key={ch.id} c={ch} replyTo={replyTo} setReplyTo={setReplyTo} token={token} onUser={onUser} user={user} postId={postId} onReload={onReload} onError={onError} onPin={onPin} onReport={onReport} isModerator={isModerator} />
+        <CommentView key={ch.id} c={ch} replyTo={replyTo} setReplyTo={setReplyTo} token={token} onUser={onUser} user={user} postId={postId} onReload={onReload} onError={onError} onPin={onPin} onReport={onReport} onDelete={onDelete} isModerator={isModerator} />
       ))}
     </div>
   );
