@@ -21,6 +21,9 @@
     <dependency><groupId>org.flywaydb</groupId><artifactId>flyway-core</artifactId></dependency>
     <dependency><groupId>com.bucket4j</groupId><artifactId>bucket4j-core</artifactId><version>8.10.1</version></dependency>
     <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-test</artifactId><scope>test</scope></dependency>
+    <!-- JDK 23 下 Mockito 内联 mock 需要较新的 Byte Buddy；显式覆盖 Boot 3.2 自带的 1.14.x -->
+    <dependency><groupId>net.bytebuddy</groupId><artifactId>byte-buddy</artifactId><version>1.17.8</version><scope>test</scope></dependency>
+    <dependency><groupId>net.bytebuddy</groupId><artifactId>byte-buddy-agent</artifactId><version>1.17.8</version><scope>test</scope></dependency>
   </dependencies>
   <build><plugins>
     <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-compiler-plugin</artifactId><configuration><fork>true</fork></configuration></plugin>
