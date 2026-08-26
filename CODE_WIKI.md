@@ -17,10 +17,10 @@ TBForum 是一个功能完整的轻量级论坛系统，采用前后端分离开
 - **无限嵌套评论树**：邻接表 + `rootId` + `depth` 模型，按根评论分页返回 `Page<CommentView>`，支持评论置顶、软删除（显示「[已删除]」占位）。
 - **标签系统**：发帖时正则解析 `#标签`，自动建立 Post↔Tag 多对多关系，`tag.postCount` 原子 SQL 更新防并发丢失。
 - **关注与互动**：关注/取关、互相关注状态、点赞/踩/收藏，同一用户对同一帖子仅保留最后一次互动（TOCTOU 竞态处理）。
-- **实时通知**：WebSocket 推送回复/点赞/@提及/精华/关注通知，前端指数退避重连；后端通过 Redis Pub/Sub 支持多实例广播，Redis 不可用时降级为本地发送。
+- **实时通知**：WebSocket 推送回复/点赞/@提及/精华/关注通知，前端指数退避重连；后端通过 Redis Pub/Sub 支持多实例通知与账号断连，实例 ID 防止自身回声，Redis 不可用时降级为本地处理。
 - **举报与管理**：常规 + 版块特色举报原因，ADMIN 后台处理；软删帖后自动关闭关联举报。
 - **Redis 缓存**：热门列表 + 浏览数防刷（按用户 ID 或 IP 去重），Redis 不可用时优雅降级。
-- **可观测性**：Micrometer Prometheus 监控（缓存命中率、WS 活跃连接数、发帖计数器），Actuator 健康检查（含 Redis 状态）。
+- **可观测性**：Micrometer Prometheus 监控（缓存命中率、WS 活跃连接数、发帖计数器），Actuator 健康检查（启用 Redis 时包含 Redis 状态）。
 - **存储抽象**：`StorageService` 接口 + `LocalStorageService` 实现，未来切换 MinIO 只需新增实现类。
 - **集中配置**：`AppProperties`（`@ConfigurationProperties`）管理标签限制、缓存 TTL、浏览防刷窗口、上传限制等参数，消除代码中的魔法数字。
 
@@ -101,11 +101,12 @@ TBForum 是一个功能完整的轻量级论坛系统，采用前后端分离开
 | `flyway-core` | 随 Boot | 数据库迁移管理（生产启用） |
 | `jjwt-api` / `jjwt-impl` / `jjwt-jackson` | 0.12.5 | JWT 签发与解析 |
 | `bucket4j-core` | 8.10.1 | 限流（登录/注册/上传） |
+| `imageio-webp` | 3.14.0 | WebP 完整解码校验与内存分配防护 |
 | `postgresql` | runtime | 生产数据库驱动 |
 | `h2` | runtime | 开发数据库（文件模式） |
 | `spring-boot-starter-test` | test | 测试支持 |
 
-构建插件：`maven-compiler-plugin`（`fork=true`）、`spring-boot-maven-plugin`（可执行 jar）。
+构建插件：`maven-compiler-plugin`（`fork=true`）、`spring-boot-maven-plugin`（可执行 jar）、`spotless-maven-plugin` 3.10.0（Palantir Java Format 2.97.0；`verify` 阶段自动检查 Java 格式）。
 
 ### 3.2 前端依赖（frontend/package.json）
 
@@ -131,12 +132,15 @@ TBForum 是一个功能完整的轻量级论坛系统，采用前后端分离开
 
 ```
 an-zhao/
+├── .editorconfig                    # 编辑器通用缩进、编码与行尾规则
+├── .gitattributes                   # Git 文本文件统一使用 LF
 ├── src/main/java/cn/tbforum/
 │   ├── TbForumApplication.java       # 启动类
 │   ├── cache/
-│   │   └── CacheService.java         # Redis 缓存（带优雅降级 + 指标记录）
+│   │   └── CacheService.java         # Redis 缓存/发布（熔断恢复 + 指标记录）
 │   ├── config/
-│   │   └── AppProperties.java        # 集中配置（@ConfigurationProperties）
+│   │   ├── AppProperties.java        # 集中配置（@ConfigurationProperties）
+│   │   └── RedisConfig.java          # 条件化 Redis Pub/Sub 监听容器
 │   ├── controller/                   # REST 控制器（12 个）
 │   │   ├── AuthController.java       # 认证：注册/登录/refresh/me/verify
 │   │   ├── ForumController.java      # 版块：CRUD/版主/举报原因
@@ -147,21 +151,22 @@ an-zhao/
 │   │   ├── TagController.java        # 标签：热门/按标签筛选
 │   │   ├── NotificationController.java # 通知：列表/未读/已读
 │   │   ├── ReportController.java     # 举报：提交/Admin 处理
-│   │   ├── UploadController.java     # 文件上传
+│   │   ├── UploadController.java     # 图片格式、尺寸、像素及完整解码校验
 │   │   ├── AdminController.java      # 管理员后台
 │   │   └── WebExceptionHandler.java  # 全局异常处理（@RestControllerAdvice）
-│   ├── domain/                       # JPA 实体/枚举（13 个）
+│   ├── domain/                       # JPA 实体/枚举
 │   │   ├── User.java / Role.java
 │   │   ├── Forum.java / ForumModerator.java
 │   │   ├── Post.java / Comment.java
 │   │   ├── Interaction.java / Favorite.java
 │   │   ├── Follow.java / Notification.java
 │   │   ├── Report.java
-│   │   └── Tag.java / PostTag.java
+│   │   ├── Tag.java / PostTag.java
+│   │   └── UploadedFile.java         # 上传所有者、用途、引用状态与过期时间
 │   ├── dto/
 │   │   └── Dtos.java                 # 19 个 record DTO（请求/响应）
 │   ├── notif/
-│   │   ├── NotificationService.java  # 通知服务 + WebSocket Handler + Redis Pub/Sub
+│   │   ├── NotificationService.java  # 通知服务 + WebSocket Handler + 跨实例事件
 │   │   └── WebSocketConfig.java      # @EnableWebSocket，注册 /ws/notifications
 │   ├── repo/                         # 12 个 JpaRepository 接口
 │   │   ├── UserRepository.java / ForumRepository.java
@@ -170,6 +175,7 @@ an-zhao/
 │   │   ├── FollowRepository.java / NotificationRepository.java
 │   │   ├── ReportRepository.java / TagRepository.java
 │   │   ├── PostTagRepository.java / ModeratorRepository.java
+│   │   └── UploadedFileRepository.java # 配额、引用与过期文件锁定查询
 │   ├── security/
 │   │   ├── SecurityConfig.java       # 安全配置 + JwtFilter + CORS + 限流放行
 │   │   ├── JwtService.java           # JWT 签发与解析
@@ -181,14 +187,16 @@ an-zhao/
 │       ├── CommentService.java       # 评论：创建/编辑/树组装/分页
 │       ├── InteractionService.java   # 互动：点赞/踩/收藏
 │       ├── ReportService.java        # 举报：提交/处理/关联关闭
+│       ├── ManagedUploadService.java # 上传登记、配额、引用确认和过期清理
 │       ├── StorageService.java       # 存储抽象接口
-│       └── LocalStorageService.java  # 本地文件存储实现
+│       └── LocalStorageService.java  # 目录隔离 + UUID 原子新建存储
 ├── src/main/resources/
 │   ├── application.yml               # 默认配置（H2 + ddl-auto=update + Actuator）
 │   ├── application-prod.yml          # 生产配置（PostgreSQL + ddl-auto=validate + Flyway）
 │   ├── db/migration/
 │   │   ├── V1__initial_schema.sql    # Flyway 初始 schema（12 张表）
-│   │   └── V2__add_soft_delete.sql   # 软删除字段（users.deleted, forums.deleted）
+│   │   ├── V2__add_soft_delete.sql   # 软删除字段（users.deleted, forums.deleted）
+│   │   └── V6__uploaded_file_lifecycle.sql # 上传文件生命周期表与索引
 │   └── static/                       # 前端构建产物（Spring Boot 静态托管）
 ├── src/test/
 │   ├── java/cn/tbforum/ApiTest.java  # 集成测试
@@ -264,8 +272,7 @@ an-zhao/
 | `passwordEncoder()` | `BCryptPasswordEncoder` |
 | `securityFilterChain` | CORS 开启、CSRF 关闭、`STATELESS` 会话、安全响应头、放行规则、注册 `JwtFilter` |
 | `corsConfigurationSource()` | 允许 `localhost:*`、`127.0.0.1:*`、`192.168.*:*`、`10.*:*`、`172.16.*:*`（覆盖局域网） |
-| `staticResources` | 注册 `/uploads/**` → `file:uploads/` |
-| `JwtFilter`（内部类） | 解析 `Authorization: Bearer xxx`，校验后写入 `SecurityContextHolder`；`JwtException` 返回 401（非静默忽略） |
+| `JwtFilter`（内部类） | 解析 `Authorization: Bearer xxx`，校验签名、用户状态和 `tokenVersion` 后写入 `SecurityContextHolder`；无效 token 返回 401 |
 
 - **安全响应头**：`X-Content-Type-Options: nosniff`、`X-Frame-Options: DENY`、HSTS（31536000s）、CSP（`default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' ...`）
 - **放行规则**（permitAll）：GET `/api/forums/**`、`/api/posts/**`、`/api/tags/**`、`/api/search`；GET `/api/users/*`、`/api/users/search`、`/api/users/*/followers`、`/api/users/*/following`；POST `/api/auth/register`、`/api/auth/login`；`/actuator/health`、`/actuator/info`、`/actuator/prometheus`、`/error`、`/`、`/index.html`、`/assets/**`、`/uploads/**`、`/ws/**`
@@ -274,13 +281,16 @@ an-zhao/
 #### `JwtService`
 - 路径：[JwtService.java](file:///c:/Users/yangc/Documents/Codex/2026-07-30/an-zhao/src/main/java/cn/tbforum/security/JwtService.java)
 - 从配置读取 `app.jwt.secret` 与 `app.jwt.expiration-hours`（默认 24h）。
-- `issue(username)`：HMAC-SHA 签发 JWT，subject 为 username。
-- `subject(token)`：解析验证签名返回 subject；非法时抛 `JwtException`。
+- `issue(username, tokenVersion)`：HMAC-SHA 签发 JWT，subject 为 username，并写入服务端会话版本 `ver`。
+- `claims(token)`：验证签名并返回 username 与 tokenVersion；非法时抛 `JwtException`。
+- **账号状态校验**：JWT 和 WebSocket 握手时查询用户状态并比对 tokenVersion；注销、封禁、密码重置或版本不匹配均拒绝旧 token；禁言账号允许只读请求，统一拒绝写请求并返回 403。
 - **Refresh 机制**：`/api/auth/refresh` 基于当前已认证身份重新 `issue` 新 token。
 
 #### `RateLimitFilter`
 - 路径：[RateLimitFilter.java](file:///c:/Users/yangc/Documents/Codex/2026-07-30/an-zhao/src/main/java/cn/tbforum/security/RateLimitFilter.java)
 - Bucket4j 限流：登录 5 次/分钟、注册 3 次/分钟、上传 10 次/分钟。
+- 客户端 IP 默认取 TCP 对端地址；仅当对端命中 `trustedProxies` 时解析 `X-Forwarded-For` / `X-Real-IP`，并从代理链右侧选择第一个非可信地址，避免伪造最左侧地址绕过限流；浏览数防刷复用同一解析器。
+- Bucket 使用 Caffeine 保存，默认最多 10000 条，闲置 10 分钟回收；429 响应包含 `Retry-After: 60`。
 - 可通过 `app.rate-limit.enabled=false` 禁用（测试环境）。
 
 ### 5.3 配置 — `cn.tbforum.config.AppProperties`
@@ -295,43 +305,47 @@ an-zhao/
 | `Moderator` | maxPerForum | 2 |
 | `Cache` | feedTtl / forumListTtl | 2 分钟 / 10 分钟 |
 | `View` | dedupWindow | 5 分钟 |
+| `RateLimit` | maxBuckets / expireAfterAccess / trustedProxies | 10000 / 10 分钟 / 空列表 |
+| `Redis` | enabled / failureCooldown | false / 30 秒 |
 
 ### 5.4 缓存服务 — `cn.tbforum.cache.CacheService`
 
 - 路径：[CacheService.java](file:///c:/Users/yangc/Documents/Codex/2026-07-30/an-zhao/src/main/java/cn/tbforum/cache/CacheService.java)
-- `@Service`，依赖 `StringRedisTemplate`（`@Autowired(required = false)`）+ `MeterRegistry`。
-- **优雅降级**：Redis 未配置或注入失败时 `available = false`，所有方法静默空操作。
+- `@Service`，通过 `ObjectProvider` 可选获取 `StringRedisTemplate` 与 `MeterRegistry`。
+- **显式启用**：开发默认 `app.redis.enabled=false`；关闭时不访问 Redis，也不启动 Pub/Sub 监听容器。
+- **熔断恢复**：操作失败后进入默认 30 秒冷却期，期间不重复连接；冷却后由下一次操作探测恢复。故障和恢复各记录一次限频日志及指标。
 
 | 方法 | 作用 |
 |------|------|
-| `isAvailable()` | Redis 是否可用 |
+| `isAvailable()` | 最近一次操作成功且当前未处于冷却期时为 true |
 | `get(key)` / `set(key, value, ttl)` | 字符串读写，记录命中/未命中指标 |
 | `evict(key)` / `evictByPrefix(prefix)` | 删除单个 / 批量删除（用 SCAN） |
 | `tryIncrementView(viewerKey, postId, window)` | 浏览数防刷：`SETNX view:{viewerKey}:{postId} 1 TTL=window` |
+| `publish(channel, payload)` | 使用同一熔断状态发布 Pub/Sub 事件 |
 
-**缓存指标**：`tbforum.cache.requests{result=hit|miss}`
+**缓存/Redis 指标**：`tbforum.cache.requests{result=hit|miss}`、`tbforum.redis.available`、`tbforum.redis.circuit.events{event=opened|recovered}`
 
 ### 5.5 通知服务 — `cn.tbforum.notif.NotificationService`
 
 - 路径：[NotificationService.java](file:///c:/Users/yangc/Documents/Codex/2026-07-30/an-zhao/src/main/java/cn/tbforum/notif/NotificationService.java)
 - `@Service` **同时 extends `TextWebSocketHandler`**。
 - `sessions: Map<String, Set<WebSocketSession>>` 按 username 维护在线会话集合。
-- **Redis Pub/Sub 多实例广播**：通知发出后，本地发送 + Redis Pub/Sub 广播到其他实例；Redis 不可用时降级为仅本地发送。
+- **Redis Pub/Sub 多实例广播**：`RedisConfig` 在启用 Redis 时显式创建监听容器；事件分为 `notification` 与 `disconnect`，分别负责跨实例推送和注销/封禁/密码重置后的连接关闭。事件携带实例 ID，发送实例忽略自身回声。
 - **事务安全**：WS 消息在事务提交后（`afterCommit`）才发送，避免回滚后消息已发。
 
 **通知类型**（`Notification.Kind`）：`REPLY`、`UPVOTE`、`MENTION`、`FEATURED`、`FOLLOW`
 
 **mention 正则**：`@([\w\u4e00-\u9fa5]{2,40})`，支持中文用户名。
 
-**WebSocket 鉴权**：从 `Sec-WebSocket-Protocol` header 提取 `bearer.{token}`（非 URL query），避免 token 记入 access log。
+**WebSocket 鉴权**：从 `Sec-WebSocket-Protocol` header 提取 `bearer.{token}`（非 URL query），验证 JWT 后继续查询用户状态；注销或封禁账号拒绝握手，并在状态事务提交后主动关闭已有连接；禁言账号仍可接收通知。
 
-**WS 指标**：`tbforum.ws.connections.active`（gauge，本实例活跃连接数）
+**WS 指标**：`tbforum.ws.connections.active`（gauge，本实例活跃连接数）、`tbforum.ws.pubsub.events{type,result}`
 
 ### 5.6 WebSocket 配置 — `cn.tbforum.notif.WebSocketConfig`
 
 - 路径：[WebSocketConfig.java](file:///c:/Users/yangc/Documents/Codex/2026-07-30/an-zhao/src/main/java/cn/tbforum/notif/WebSocketConfig.java)
 - `@Configuration @EnableWebSocket`，注册 handler 到 `/ws/notifications`。
-- 使用 `HttpSessionHandshakeInterceptor` 在握手阶段提取 `Sec-WebSocket-Protocol` 中的 token。
+- 使用自定义 `HandshakeInterceptor` 在握手阶段提取 `Sec-WebSocket-Protocol` 中的 token，并校验用户是否存在、注销或处于封禁期。
 
 ### 5.7 控制器层 — `cn.tbforum.controller`
 
@@ -348,7 +362,8 @@ an-zhao/
 | [TagController](file:///c:/Users/yangc/Documents/Codex/2026-07-30/an-zhao/src/main/java/cn/tbforum/controller/TagController.java) | `/api/tags` | popular, postsByTag |
 | [NotificationController](file:///c:/Users/yangc/Documents/Codex/2026-07-30/an-zhao/src/main/java/cn/tbforum/controller/NotificationController.java) | `/api/notifications` | list, unreadCount, markRead, markAllRead |
 | [ReportController](file:///c:/Users/yangc/Documents/Codex/2026-07-30/an-zhao/src/main/java/cn/tbforum/controller/ReportController.java) | `/api/reports` | submit, moderatorList, moderatorCounts, handleModerated |
-| [UploadController](file:///c:/Users/yangc/Documents/Codex/2026-07-30/an-zhao/src/main/java/cn/tbforum/controller/UploadController.java) | `/api/upload` | 图片上传 |
+| [UploadController](file:///c:/Users/yangc/Documents/Codex/2026-07-30/an-zhao/src/main/java/cn/tbforum/controller/UploadController.java) | `/api/upload` | `purpose=AVATAR|POST_IMAGE`、魔数、尺寸、像素、完整解码与重编码校验 |
+| [UploadResourceController](file:///c:/Users/yangc/Documents/Codex/2026-07-30/an-zhao/src/main/java/cn/tbforum/controller/UploadResourceController.java) | `/uploads/{filename}` | 仅读取数据库状态为 `REFERENCED` 的图片，限制媒体类型并返回 `nosniff` 与不可变缓存头 |
 | [AdminController](file:///c:/Users/yangc/Documents/Codex/2026-07-30/an-zhao/src/main/java/cn/tbforum/controller/AdminController.java) | `/api/admin` | 举报 / 用户治理（封禁/禁言）/ 审计日志 |
 | [WebExceptionHandler](file:///c:/Users/yangc/Documents/Codex/2026-07-30/an-zhao/src/main/java/cn/tbforum/controller/WebExceptionHandler.java) | `@RestControllerAdvice` | 全局异常处理 |
 
@@ -364,10 +379,12 @@ an-zhao/
 | [ReportService](file:///c:/Users/yangc/Documents/Codex/2026-07-30/an-zhao/src/main/java/cn/tbforum/service/ReportService.java) | 举报提交（唯一约束）、Admin 处理、软删帖自动关闭关联举报 |
 | [AuditService](file:///c:/Users/yangc/Documents/Codex/2026-07-30/an-zhao/src/main/java/cn/tbforum/service/AuditService.java) | 审计日志：封禁/举报处理/删帖/设精/锁帖留痕，Admin 可查 |
 | [MailService](file:///c:/Users/yangc/Documents/Codex/2026-07-30/an-zhao/src/main/java/cn/tbforum/service/MailService.java) / [ConsoleMailService](file:///c:/Users/yangc/Documents/Codex/2026-07-30/an-zhao/src/main/java/cn/tbforum/service/ConsoleMailService.java) | 邮件发送抽象（开发环境将密码重置链接打印到控制台） |
-| [StorageService](file:///c:/Users/yangc/Documents/Codex/2026-07-30/an-zhao/src/main/java/cn/tbforum/service/StorageService.java) | 存储抽象接口（未来切 MinIO 只需新增实现） |
-| [LocalStorageService](file:///c:/Users/yangc/Documents/Codex/2026-07-30/an-zhao/src/main/java/cn/tbforum/service/LocalStorageService.java) | 本地文件存储（魔术数校验 + ImageIO 重编码去元数据） |
+| [StorageService](file:///c:/Users/yangc/Documents/Codex/2026-07-30/an-zhao/src/main/java/cn/tbforum/service/StorageService.java) | 存储、受控读取与删除抽象（未来切 MinIO 只需新增实现） |
+| [LocalStorageService](file:///c:/Users/yangc/Documents/Codex/2026-07-30/an-zhao/src/main/java/cn/tbforum/service/LocalStorageService.java) | 本地文件存储（规范化目录、UUID 文件名、`CREATE_NEW` 禁止覆盖、路径与符号链接防护） |
+| [ManagedUploadService](file:///c:/Users/yangc/Documents/Codex/2026-07-30/an-zhao/src/main/java/cn/tbforum/service/ManagedUploadService.java) | 上传登记、用户配额锁、引用同步、受控读取、过期及释放文件清理 |
+| [LegacyUploadReconciler](file:///c:/Users/yangc/Documents/Codex/2026-07-30/an-zhao/src/main/java/cn/tbforum/service/LegacyUploadReconciler.java) | 启动时按主键分批、幂等登记旧头像和帖子中的本地图片引用 |
 
-**发帖指标**：`tbforum.posts.created_total{forum=...}`（按版块维度计数器）
+**业务指标**：`tbforum.posts.created_total{forum=...}`、`tbforum.uploads.stored_total{purpose=...}`、`tbforum.uploads.deleted_total{reason=...}`、`tbforum.uploads.quota_rejected_total`、`tbforum.uploads.delete_failures_total`、`tbforum.uploads.legacy_reconciled_total{purpose=...}`。
 
 ### 5.9 领域模型 — `cn.tbforum.domain`
 
@@ -390,6 +407,7 @@ an-zhao/
 | [PostTag](file:///c:/Users/yangc/Documents/Codex/2026-07-30/an-zhao/src/main/java/cn/tbforum/domain/PostTag.java) | `post_tags` | - | post、tag；UK(post_id, tag_id) |
 | [AuditLog](file:///c:/Users/yangc/Documents/Codex/2026-07-30/an-zhao/src/main/java/cn/tbforum/domain/AuditLog.java) | `audit_logs` | action/targetType/targetId/detail | actor→User；审计留痕 |
 | [PasswordResetToken](file:///c:/Users/yangc/Documents/Codex/2026-07-30/an-zhao/src/main/java/cn/tbforum/domain/PasswordResetToken.java) | `password_reset_tokens` | tokenHash(UK,100)/expiresAt/used | user→User；一次性重置凭证 |
+| [UploadedFile](file:///c:/Users/yangc/Documents/Codex/2026-07-30/an-zhao/src/main/java/cn/tbforum/domain/UploadedFile.java) | `uploaded_files` | purpose/status/url(UK)/sizeBytes/referenceId/expiresAt | owner→User；用途 AVATAR/POST_IMAGE；状态 PENDING/REFERENCED |
 
 ### 5.10 仓储层 — `cn.tbforum.repo`
 
@@ -475,7 +493,7 @@ createRoot(rootEl).render(
 - **401 处理**：清除 localStorage token，派发 `tb-auth-expired` 事件
 - **空响应处理**：兼容 201/204 无 body
 - 按业务域分组：`authApi`、`forumApi`、`postApi`、`commentApi`、`userApi`、`notifApi`、`tagApi`、`reportApi`、`adminApi`
-- `uploadFile(file, token)`：FormData 上传，不带 JSON Content-Type
+- `uploadFile(file, token, purpose)`：FormData 上传，`purpose` 为 `AVATAR` 或 `POST_IMAGE`，不手动设置 JSON Content-Type
 
 ### 6.5 组件层 — `components/`
 
@@ -560,6 +578,10 @@ tags (id PK, name UK, postCount)
 - 路径：[src/main/resources/db/migration/](file:///c:/Users/yangc/Documents/Codex/2026-07-30/an-zhao/src/main/resources/db/migration/)
 - `V1__initial_schema.sql`：创建全部 12 张表（PostgreSQL 语法，BIGSERIAL/REFERENCES/CONSTRAINT/INDEX）
 - `V2__add_soft_delete.sql`：P2 阶段新增 `users.deleted` 和 `forums.deleted` 字段（`ADD COLUMN IF NOT EXISTS`）
+- `V3__moderation_audit.sql`：新增封禁、禁言和治理审计结构
+- `V4__email_password_reset.sql`：新增用户邮箱及密码重置令牌表
+- `V5__password_reset_security.sql`：新增 `users.token_version` 和重置令牌查询索引
+- `V6__uploaded_file_lifecycle.sql`：新增 `uploaded_files`，记录所有者、用途、大小、引用和清理时间，并建立配额/引用/清理索引
 - 开发环境 `spring.flyway.enabled=false`，由 Hibernate `ddl-auto=update` 维护表结构；生产环境 `spring.flyway.enabled=true` + `ddl-auto=validate`
 
 ---
@@ -576,11 +598,24 @@ tags (id PK, name UK, postCount)
 | `spring.jpa.open-in-view` | `false` | 关闭 OSIV |
 | `spring.flyway.enabled` | `${FLYWAY_ENABLED:false}` | 开发关闭 |
 | `spring.data.redis.host` / `port` | `${REDIS_HOST:localhost}` / `${REDIS_PORT:6379}` | |
+| `app.redis.enabled` | `${REDIS_ENABLED:false}` | 开发默认关闭 Redis 和 Pub/Sub |
+| `app.redis.failure-cooldown` | `${REDIS_FAILURE_COOLDOWN:30s}` | Redis 失败后的熔断冷却时间 |
 | `spring.servlet.multipart.max-file-size` | `2MB` | 图片上传限制 |
+| `app.upload.max-file-size` | `${UPLOAD_MAX_FILE_SIZE:2097152}` | Controller 输入及重编码结果字节上限 |
+| `app.upload.max-width` / `max-height` | `${UPLOAD_MAX_WIDTH:4096}` / `${UPLOAD_MAX_HEIGHT:4096}` | 图片宽高上限 |
+| `app.upload.max-pixels` | `${UPLOAD_MAX_PIXELS:16777216}` | 图片总像素上限，防止解压内存放大 |
+| `app.upload.max-user-storage` | `${UPLOAD_MAX_USER_STORAGE:52428800}` | 单用户受管上传总配额，默认 50MB |
+| `app.upload.pending-ttl` | `${UPLOAD_PENDING_TTL:24h}` | 未被头像或帖子引用的上传保留时间 |
+| `app.upload.cleanup-interval` | `${UPLOAD_CLEANUP_INTERVAL:1h}` | 过期上传清理周期 |
+| `app.upload.cleanup-batch-size` | `${UPLOAD_CLEANUP_BATCH_SIZE:100}` | 单轮加锁并清理的最大记录数 |
+| `app.upload.legacy-reconciliation-enabled` | `${UPLOAD_LEGACY_RECONCILIATION_ENABLED:true}` | 启动时登记旧版本已有的头像与帖子图片引用；处理幂等，确认完成后可关闭 |
+| `app.upload.legacy-reconciliation-batch-size` | `${UPLOAD_LEGACY_RECONCILIATION_BATCH_SIZE:200}` | 历史引用协调的单批记录数 |
+| `app.storage.local.dir` | `${UPLOAD_DIR:uploads}` | 本地上传根目录；仅通过受控读取端点访问 |
 | `app.jwt.secret` | `${JWT_SECRET:change-this-...}` | 开发占位串 |
 | `app.jwt.expiration-hours` | `24` | JWT 有效期 |
+| `app.public-base-url` | `${PUBLIC_BASE_URL:http://localhost:8089}` | 生成密码重置链接的固定公开地址，不读取请求 Host |
 | `management.endpoints.web.exposure.include` | `health,info,metrics,prometheus` | Actuator 端点 |
-| `management.health.redis.enabled` | `true` | Redis 健康检查 |
+| `management.health.redis.enabled` | `${REDIS_ENABLED:false}` | 仅启用 Redis 时加入健康检查 |
 | `management.metrics.tags.application` | `tbforum` | 全局指标标签 |
 
 ### 8.2 application-prod.yml（生产）
@@ -591,6 +626,8 @@ tags (id PK, name UK, postCount)
 | `spring.jpa.hibernate.ddl-auto` | `validate` | 严格校验，不自动建表 |
 | `spring.flyway.enabled` | `true` | 启用 Flyway 迁移 |
 | `app.jwt.secret` | `${JWT_SECRET}` | **无默认值，必须由环境变量提供** |
+| `app.public-base-url` | `${PUBLIC_BASE_URL}` | **无默认值，必须配置论坛公开 HTTP(S) 地址** |
+| `app.redis.enabled` | `${REDIS_ENABLED:true}` | 生产默认启用 Redis；可显式关闭以降级运行 |
 | `server.error.include-message` | `never` | 生产不暴露错误详情 |
 
 ---
@@ -635,12 +672,24 @@ npm run build:deploy
 # 自动同步到 src/main/resources/static/（见 frontend/scripts/sync-static.mjs）
 ```
 
-### 9.5 监控端点
+### 9.5 代码格式与检查
 
-- `GET /actuator/health` — 健康检查（含 Redis 状态，Redis 故障时返回 DOWN）
+```powershell
+mvn spotless:check  # 检查 Java 格式，不修改文件
+mvn spotless:apply  # 自动格式化 Java 源码和测试
+mvn verify          # 运行测试，并在 verify 阶段自动执行格式检查
+```
+
+- Java 使用 Palantir Java Format，Spotless 同时执行导入排序、无用导入清理、尾随空格清理和文件末尾换行校验。
+- `.editorconfig` 统一 UTF-8、LF、缩进和末尾换行；`.gitattributes` 固定主要文本文件的 Git 行尾。
+- 格式化范围仅为 `src/main/java/**/*.java` 和 `src/test/java/**/*.java`，不处理前端生成的静态资源。
+
+### 9.6 监控端点
+
+- `GET /actuator/health` — 健康检查（启用 Redis 时包含 Redis 状态；启用后故障返回 DOWN）
 - `GET /actuator/info` — 应用信息
 - `GET /actuator/metrics` — 指标列表
-- `GET /actuator/prometheus` — Prometheus 格式指标（含 `tbforum.cache.requests`、`tbforum.ws.connections.active`、`tbforum.posts.created_total` 等自定义指标）
+- `GET /actuator/prometheus` — Prometheus 格式指标（含缓存、WebSocket、发帖，以及上传成功/删除/配额拒绝/删除失败等自定义指标）
 
 ---
 
@@ -649,14 +698,22 @@ npm run build:deploy
 ### 10.1 认证流程
 
 1. `POST /api/auth/register` 或 `/login`，BCrypt 校验密码
-2. `JwtService.issue(username)` 签发 token 返回客户端
+2. `JwtService.issue(username, tokenVersion)` 签发带会话版本的 token 返回客户端
 3. 前端存 localStorage（`tb-token`、`tb-user`），后续请求带 `Authorization: Bearer`
 4. `JwtFilter` 解析后写入 SecurityContext，控制器通过 `UserService.current()` 取出
 5. **前端 refresh**：解析 JWT exp，在过期前 5 分钟或半程调 `POST /api/auth/refresh` 换新 token
 6. **401 处理**：`api()` 收到 401 时清除 token 并派发 `tb-auth-expired` 事件，触发 logout + 弹登录框
-7. **无效 token**：后端返回 401（非静默降级为匿名）
+7. **无效 token**：后端返回 401（非静默降级为匿名）；密码重置递增服务端 tokenVersion，立即撤销旧 JWT
 
-### 10.2 权限模型
+### 10.2 密码重置流程
+
+1. `forgot-password` 始终返回成功，避免泄露邮箱是否注册。
+2. 重置链接只使用 `app.public-base-url`，不信任请求 `Host` 或转发头。
+3. 签发新令牌前将该用户旧的未使用令牌全部置为已使用；数据库仅保存 SHA-256 摘要。
+4. `reset-password` 使用条件 UPDATE 原子消费令牌，并同时校验未使用和未过期，避免并发复用。
+5. 重置成功后更新 BCrypt 密码、递增 tokenVersion，并关闭当前实例上的既有 WebSocket。
+
+### 10.3 权限模型
 
 - **公开读**：版块/帖子/评论/标签/用户资料的大部分 GET 端点
 - **登录写**：发帖、评论、互动、关注、收藏、举报、上传
@@ -713,6 +770,7 @@ npm run build:deploy
 - **TOCTOU 竞态**：注册/关注等操作捕获 `DataIntegrityViolationException`
 - **事务安全**：WS 消息在事务 `afterCommit` 后发送
 - **缓存一致性**：缓存 key 排除 viewer 相关字段，favorited 状态客户端重算
+- **上传一致性**：上传先登记为 PENDING；资料/帖子事务中校验所有者和用途后转为 REFERENCED；替换、移除或删帖仅在事务提交后删除物理文件，失败记录保留供定时任务重试
 
 ---
 
@@ -726,13 +784,13 @@ npm run build:deploy
 6. **限流**：Bucket4j 实现登录/注册/上传限流，可通过 `app.rate-limit.enabled=false` 禁用。
 7. **缓存策略**：仅缓存 forums 列表（10 分钟）和 latest/hot feed 第 0 页（2 分钟）；featured/fate 不缓存。`evictByPrefix` 使用 SCAN 命令。
 8. **存储抽象**：`StorageService` 接口 + `LocalStorageService` 实现，未来切换 MinIO 只需新增实现类并配置 `app.storage.type=minio`。
-9. **可观测性**：Micrometer Prometheus 指标覆盖缓存命中率（`tbforum.cache.requests`）、WS 连接数（`tbforum.ws.connections.active`）、发帖计数（`tbforum.posts.created_total{forum=...}`）。健康检查反映 Redis 状态。
+9. **可观测性**：Micrometer Prometheus 指标覆盖缓存命中率（`tbforum.cache.requests`）、WS 连接数（`tbforum.ws.connections.active`）、发帖计数（`tbforum.posts.created_total{forum=...}`）。启用 Redis 时，健康检查同步反映其状态。
 10. **H2 文件库**：开发使用 `jdbc:h2:file:./data/tbforum;AUTO_SERVER=TRUE`，支持多连接。重启后端不会丢数据，schema 变更由 `ddl-auto=update` 维护。
 11. **Flyway 迁移**：开发环境关闭，由 Hibernate 维护表结构；生产环境启用 + `ddl-auto=validate`。修改实体后需同步新增 `V{n}__*.sql` 迁移脚本。
 12. **CORS 白名单**：允许 `localhost:*`、`127.0.0.1:*`、`192.168.*:*`、`10.*:*`、`172.16.*:*`，覆盖典型局域网段。
 13. **错误处理**：前端 `api()` 统一处理 401（清 token + 弹登录框）和错误消息提取；后端 `WebExceptionHandler`（`@RestControllerAdvice`）统一处理 `ResponseStatusException`、`MethodArgumentNotValidException`、`DataIntegrityViolationException` 和通用 `Exception`。
 14. **安全响应头**：`X-Content-Type-Options: nosniff`、`X-Frame-Options: DENY`、HSTS、CSP（meta tag + SecurityConfig 双重保障）。
-15. **图片上传安全**：2MB 大小限制 + 魔术数校验 + `ImageIO` 重编码去除 EXIF 元数据。
+15. **图片上传安全与生命周期**：输入与重编码结果限制为 2MB；先校验魔数、宽高和总像素，再执行完整解码与重编码。WebP 由 TwelveMonkeys 解码后转为 PNG；本地文件使用 UUID + `CREATE_NEW`。每个文件记录所有者、用途和引用状态，跨用户/跨用途引用会被拒绝；单用户默认配额 50MB，未引用文件 24 小时后分批清理。
 
 ---
 
@@ -750,4 +808,5 @@ npm run build:deploy
 - **界面**：浅色主题切换、移动端抽屉导航、列表骨架屏、统一 SVG 图标（`Icons.tsx`）。
 - **发现**：`/rss.xml`、`/sitemap.xml`、`/robots.txt`；热门排序改为时间衰减评分；OG 标签与 favicon。
 - **账号**：注册可选邮箱，`POST /api/auth/forgot-password` 与 `POST /api/auth/reset-password` 支持找回密码（开发环境重置链接打印在控制台，生产需接入 SMTP 实现 `MailService`）。
+- **上传治理**：上传区分头像和帖子图片，增加所有权/用途校验、单用户配额、引用同步、头像替换/删帖释放及过期文件定时清理。
 - **迁移**：新增 `V3__moderation_audit.sql`（users 封禁/禁言列 + audit_logs 表）与 `V4__email_password_reset.sql`（users.email + password_reset_tokens 表）。

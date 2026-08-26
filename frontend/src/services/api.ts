@@ -41,9 +41,12 @@ export async function api<T>(path: string, options: RequestInit = {}, token = ''
 }
 
 /** 文件上传（FormData，跳过 JSON Content-Type 由浏览器自动设置 boundary） */
-export async function uploadFile(file: File, token: string): Promise<{ url: string }> {
+export type UploadPurpose = 'AVATAR' | 'POST_IMAGE';
+
+export async function uploadFile(file: File, token: string, purpose: UploadPurpose): Promise<{ url: string }> {
   const fd = new FormData();
   fd.append('file', file);
+  fd.append('purpose', purpose);
   const res = await fetch('/api/upload', { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: fd });
   if (res.status === 401) {
     clearAuth();

@@ -1,74 +1,283 @@
 package cn.tbforum.notif;
-import cn.tbforum.domain.*; import cn.tbforum.repo.NotificationRepository; import cn.tbforum.security.JwtService; import cn.tbforum.repo.UserRepository;
+
+import cn.tbforum.cache.CacheService;
+import cn.tbforum.config.AppProperties;
+import cn.tbforum.domain.*;
+import cn.tbforum.domain.Notification;
+import cn.tbforum.domain.User;
+import cn.tbforum.repo.NotificationRepository;
+import cn.tbforum.repo.UserRepository;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micrometer.core.instrument.MeterRegistry;
+import java.nio.charset.StandardCharsets;
+import java.util.*;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.*;
+import java.util.concurrent.ConcurrentHashMap;
+import org.slf4j.Logger;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.connection.Message;
-import org.springframework.data.redis.connection.MessageListener;
-import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.data.redis.listener.PatternTopic;
+import org.springframework.data.redis.listener.ChannelTopic;
 import org.springframework.data.redis.listener.RedisMessageListenerContainer;
-import org.springframework.stereotype.Service; import org.springframework.transaction.support.TransactionSynchronization; import org.springframework.transaction.support.TransactionSynchronizationManager; import org.springframework.web.socket.*; import org.springframework.web.socket.handler.TextWebSocketHandler;
-import org.springframework.web.socket.server.support.HttpSessionHandshakeInterceptor;
-import org.springframework.web.socket.handler.ConcurrentWebSocketSessionDecorator;
-import java.util.*; import java.util.concurrent.*;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.web.socket.*;
+import org.springframework.web.socket.CloseStatus;
+import org.springframework.web.socket.TextMessage;
+import org.springframework.web.socket.WebSocketSession;
+import org.springframework.web.socket.handler.TextWebSocketHandler;
 
 @Service
 public class NotificationService extends TextWebSocketHandler {
- private static final org.slf4j.Logger log=org.slf4j.LoggerFactory.getLogger(NotificationService.class);
- private final NotificationRepository notifications; private final JwtService jwt; private final UserRepository users;
- private final StringRedisTemplate redis; private final boolean redisAvailable;
- private final Map<String,Set<WebSocketSession>> sessions=new ConcurrentHashMap<>();
- private final MeterRegistry meterRegistry;
- private static final com.fasterxml.jackson.databind.ObjectMapper MAPPER=new com.fasterxml.jackson.databind.ObjectMapper();
- /** Redis Pub/Sub 频道：多实例间广播 WS 消息 */
- private static final String WS_CHANNEL="tbforum:ws:notify";
- public NotificationService(NotificationRepository n,JwtService j,UserRepository u,@Autowired(required=false) StringRedisTemplate r,@Autowired(required=false) RedisMessageListenerContainer container,@Autowired(required=false) MeterRegistry registry){
-  notifications=n;jwt=j;users=u;redis=r;redisAvailable=r!=null;meterRegistry=registry;
-  // 注册 WS 活跃连接数 gauge（本实例维度）
-  if(meterRegistry!=null){
-   meterRegistry.gauge("tbforum.ws.connections.active", java.util.Collections.emptyList(), sessions, s->s.values().stream().mapToInt(Set::size).sum());
-  }
-  // 注册订阅：收到 Redis 消息后转发到本地 session（多实例广播）
-  if(redisAvailable&&container!=null){
-   container.addMessageListener(new MessageListener(){
-    @Override public void onMessage(Message message,byte[] pattern){
-     try{var node=MAPPER.readTree(new String(message.getBody(),java.nio.charset.StandardCharsets.UTF_8));sendWs(node.get("user").asText(),node.get("msg").asText());}catch(Exception e){log.warn("ws subscribe parse failed",e);}
+    private static final Logger log = org.slf4j.LoggerFactory.getLogger(NotificationService.class);
+    private static final ObjectMapper MAPPER = new ObjectMapper();
+    static final String WS_CHANNEL = "tbforum:ws:events";
+
+    private final NotificationRepository notifications;
+    private final UserRepository users;
+    private final CacheService cache;
+    private final MeterRegistry meterRegistry;
+    private final boolean redisEnabled;
+    private final String instanceId = UUID.randomUUID().toString();
+    private final Map<String, Set<WebSocketSession>> sessions = new ConcurrentHashMap<>();
+
+    @Autowired
+    public NotificationService(
+            NotificationRepository notifications,
+            UserRepository users,
+            CacheService cache,
+            ObjectProvider<RedisMessageListenerContainer> containerProvider,
+            ObjectProvider<MeterRegistry> registryProvider,
+            AppProperties properties) {
+        this(
+                notifications,
+                users,
+                cache,
+                containerProvider.getIfAvailable(),
+                registryProvider.getIfAvailable(),
+                properties);
     }
-   },new PatternTopic(WS_CHANNEL));
-  }
- }
 
- @Override public void afterConnectionEstablished(WebSocketSession session) throws Exception {
- String user=authUser(session); if(user==null){session.close(CloseStatus.POLICY_VIOLATION);return;} sessions.computeIfAbsent(user,k->ConcurrentHashMap.newKeySet()).add(session);
- }
- @Override public void afterConnectionClosed(WebSocketSession session,CloseStatus status){
- String user=authUser(session); if(user!=null){var s=sessions.get(user);if(s!=null)s.remove(session);}
- }
- private String authUser(WebSocketSession session){
- // 从握手阶段 HandshakeInterceptor 存入的 attributes 读取已验证用户名
- Object user=session.getAttributes().get("ws-user");
- return user!=null?user.toString():null;
- }
+    NotificationService(
+            NotificationRepository notifications,
+            UserRepository users,
+            CacheService cache,
+            RedisMessageListenerContainer container,
+            MeterRegistry registry,
+            AppProperties properties) {
+        this.notifications = notifications;
+        this.users = users;
+        this.cache = cache;
+        this.meterRegistry = registry;
+        this.redisEnabled = properties.getRedis().isEnabled();
 
- public void notify(User recipient,User actor,Notification.Kind kind,String text,Long postId,Long commentId){
- if(recipient==null||actor==null||recipient.id.equals(actor.id))return;
- Notification n=new Notification(); n.user=recipient; n.actor=actor; n.kind=kind; n.text=text; n.postId=postId; n.commentId=commentId;
- notifications.save(n);
- String msg;
- try{var obj=MAPPER.createObjectNode();obj.put("id",n.id);obj.put("kind",n.kind.name());obj.put("text",n.text);obj.put("actor",actor.username);if(postId!=null)obj.put("postId",postId);else obj.putNull("postId");if(commentId!=null)obj.put("commentId",commentId);else obj.putNull("commentId");obj.put("createdAt",n.createdAt.toString());msg=MAPPER.writeValueAsString(obj);}catch(Exception e){return;}
- // 事务提交后再发 WS，避免回滚后消息已发
- if(TransactionSynchronizationManager.isSynchronizationActive()){TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization(){@Override public void afterCommit(){dispatch(recipient.username,msg);}});}else{dispatch(recipient.username,msg);}
- }
- /** 分发 WS 消息：本地发送 + Redis Pub/Sub 广播到其他实例 */
- private void dispatch(String username,String msg){
-  sendWs(username,msg);
-  if(redisAvailable){try{var obj=MAPPER.createObjectNode();obj.put("user",username);obj.put("msg",msg);redis.convertAndSend(WS_CHANNEL,MAPPER.writeValueAsString(obj));}catch(Exception e){log.warn("ws publish failed user={}",username,e);}}
- }
- private void sendWs(String username,String msg){var s=sessions.get(username);if(s!=null)for(var sess:s)if(sess.isOpen())try{sess.sendMessage(new TextMessage(msg));}catch(Exception e){log.warn("ws send failed user={}",username,e);}}
+        if (registry != null) {
+            registry.gauge(
+                    "tbforum.ws.connections.active",
+                    sessions,
+                    value -> value.values().stream().mapToInt(Set::size).sum());
+        }
+        if (redisEnabled && container != null) {
+            container.addMessageListener(this::onRedisMessage, new ChannelTopic(WS_CHANNEL));
+        }
+    }
 
- public void notifyMentions(String content,User actor,Long postId,Long commentId){
- var m=java.util.regex.Pattern.compile("@([\\w\\u4e00-\\u9fa5]{2,40})").matcher(content);
- Set<String> seen=new HashSet<>();
- while(m.find()){String name=m.group(1);if(seen.add(name))users.findByUsername(name).ifPresent(u->notify(u,actor,Notification.Kind.MENTION,"在帖子中提到了你",postId,commentId));}
- }
+    @Override
+    public void afterConnectionEstablished(WebSocketSession session) throws Exception {
+        String username = authUser(session);
+        if (username == null) {
+            session.close(CloseStatus.POLICY_VIOLATION);
+            return;
+        }
+        sessions.computeIfAbsent(username, key -> ConcurrentHashMap.newKeySet()).add(session);
+    }
+
+    @Override
+    public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
+        String username = authUser(session);
+        if (username == null) {
+            return;
+        }
+        var active = sessions.get(username);
+        if (active != null) {
+            active.remove(session);
+            if (active.isEmpty()) {
+                sessions.remove(username, active);
+            }
+        }
+    }
+
+    /** 注销、封禁或密码重置提交后，在所有实例关闭该用户连接。 */
+    public void disconnect(String username) {
+        afterCommit(() -> {
+            disconnectLocal(username);
+            publishEvent("disconnect", username, null);
+        });
+    }
+
+    public void notify(User recipient, User actor, Notification.Kind kind, String text, Long postId, Long commentId) {
+        if (recipient == null || actor == null || recipient.id.equals(actor.id)) {
+            return;
+        }
+        Notification notification = new Notification();
+        notification.user = recipient;
+        notification.actor = actor;
+        notification.kind = kind;
+        notification.text = text;
+        notification.postId = postId;
+        notification.commentId = commentId;
+        notifications.save(notification);
+
+        String payload;
+        try {
+            var json = MAPPER.createObjectNode();
+            json.put("id", notification.id);
+            json.put("kind", notification.kind.name());
+            json.put("text", notification.text);
+            json.put("actor", actor.username);
+            if (postId == null) json.putNull("postId");
+            else json.put("postId", postId);
+            if (commentId == null) json.putNull("commentId");
+            else json.put("commentId", commentId);
+            json.put("createdAt", notification.createdAt.toString());
+            payload = MAPPER.writeValueAsString(json);
+        } catch (Exception e) {
+            log.warn("通知序列化失败 user={}", recipient.username, e);
+            return;
+        }
+        afterCommit(() -> dispatch(recipient.username, payload));
+    }
+
+    public void notifyMentions(String content, User actor, Long postId, Long commentId) {
+        var matcher =
+                java.util.regex.Pattern.compile("@([\\w\\u4e00-\\u9fa5]{2,40})").matcher(content);
+        var seen = new HashSet<String>();
+        while (matcher.find()) {
+            String username = matcher.group(1);
+            if (seen.add(username)) {
+                users.findByUsername(username)
+                        .ifPresent(
+                                user -> notify(user, actor, Notification.Kind.MENTION, "在帖子中提到了你", postId, commentId));
+            }
+        }
+    }
+
+    void onRedisMessage(Message message, byte[] pattern) {
+        try {
+            var event = MAPPER.readTree(new String(message.getBody(), StandardCharsets.UTF_8));
+            if (instanceId.equals(event.path("source").asText())) {
+                return;
+            }
+            String type = event.path("type").asText();
+            String username = event.path("user").asText(null);
+            if (username == null || username.isBlank()) {
+                throw new IllegalArgumentException("missing user");
+            }
+            switch (type) {
+                case "notification" -> {
+                    String payload = event.path("payload").asText(null);
+                    if (payload == null) {
+                        throw new IllegalArgumentException("missing payload");
+                    }
+                    sendWs(username, payload);
+                }
+                case "disconnect" -> disconnectLocal(username);
+                default -> throw new IllegalArgumentException("unknown event type");
+            }
+            recordPubSub(type, "received");
+        } catch (Exception e) {
+            log.warn("WebSocket Redis 事件解析失败: {}", e.getMessage());
+            recordPubSub("invalid", "rejected");
+        }
+    }
+
+    String instanceId() {
+        return instanceId;
+    }
+
+    private void dispatch(String username, String payload) {
+        sendWs(username, payload);
+        publishEvent("notification", username, payload);
+    }
+
+    private void publishEvent(String type, String username, String payload) {
+        if (!redisEnabled) {
+            return;
+        }
+        try {
+            var event = MAPPER.createObjectNode();
+            event.put("type", type);
+            event.put("source", instanceId);
+            event.put("user", username);
+            if (payload == null) event.putNull("payload");
+            else event.put("payload", payload);
+            boolean published = cache.publish(WS_CHANNEL, MAPPER.writeValueAsString(event));
+            recordPubSub(type, published ? "published" : "dropped");
+        } catch (Exception e) {
+            log.warn("WebSocket Redis 事件序列化失败 type={} user={}", type, username, e);
+        }
+    }
+
+    private void sendWs(String username, String payload) {
+        var active = sessions.get(username);
+        if (active == null) {
+            return;
+        }
+        for (var session : active) {
+            if (session.isOpen()) {
+                try {
+                    session.sendMessage(new TextMessage(payload));
+                } catch (Exception e) {
+                    log.warn("WebSocket 发送失败 user={}", username, e);
+                }
+            }
+        }
+    }
+
+    private void disconnectLocal(String username) {
+        var active = sessions.remove(username);
+        if (active == null) {
+            return;
+        }
+        for (var session : active) {
+            if (session.isOpen()) {
+                try {
+                    session.close(CloseStatus.POLICY_VIOLATION);
+                } catch (Exception e) {
+                    log.warn("WebSocket 关闭失败 user={}", username, e);
+                }
+            }
+        }
+    }
+
+    private void recordPubSub(String type, String result) {
+        if (meterRegistry != null) {
+            meterRegistry
+                    .counter("tbforum.ws.pubsub.events", "type", type, "result", result)
+                    .increment();
+        }
+    }
+
+    private static void afterCommit(Runnable task) {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    task.run();
+                }
+            });
+        } else {
+            task.run();
+        }
+    }
+
+    private static String authUser(WebSocketSession session) {
+        Object username = session.getAttributes().get("ws-user");
+        return username == null ? null : username.toString();
+    }
 }

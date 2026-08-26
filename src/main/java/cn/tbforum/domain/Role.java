@@ -1,1 +1,6 @@
-package cn.tbforum.domain; public enum Role { USER, ADMIN }
+package cn.tbforum.domain;
+
+public enum Role {
+    USER,
+    ADMIN
+}

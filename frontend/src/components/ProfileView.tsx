@@ -39,7 +39,7 @@ export function ProfileView(props: Props) {
     if (!file.type.startsWith('image/')) { onError(new Error('只能上传图片文件')); return; }
     if (file.size > 2 * 1024 * 1024) { onError(new Error('图片不能超过 2MB')); return; }
     try {
-      const data = await uploadFile(file, token);
+      const data = await uploadFile(file, token, 'AVATAR');
       setEditForm({ ...editForm, avatarUrl: data.url });
     } catch (err) { onError(err); }
   }

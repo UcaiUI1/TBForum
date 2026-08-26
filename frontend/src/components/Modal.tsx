@@ -35,7 +35,7 @@ export function Modal({ type, close, change, submit, active, postForm, setPostFo
     if (file.size > 2 * 1024 * 1024) { onError(new Error('图片不能超过 2MB')); return; }
     setUploading(true);
     try {
-      const data = await uploadFile(file, token);
+      const data = await uploadFile(file, token, 'POST_IMAGE');
       const suffix = postForm.content.trim().endsWith('\n') || postForm.content === '' ? '' : '\n';
       setPostForm({ ...postForm, content: `${postForm.content}${suffix}![图片](${data.url})\n` });
     } catch (err) { onError(err); }

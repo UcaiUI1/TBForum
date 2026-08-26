@@ -1,89 +1,198 @@
 package cn.tbforum.cache;
+
+import cn.tbforum.config.AppProperties;
 import io.micrometer.core.instrument.MeterRegistry;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.util.HashSet;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.LongSupplier;
+import org.slf4j.Logger;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.redis.core.ScanOptions;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
-import java.time.Duration;
-import java.util.concurrent.TimeUnit;
 
-/**
- * Redis 缓存服务：封装常用操作，Redis 不可用时静默降级（不阻断业务）。
- * 用于版块列表、帖子详情缓存和浏览数防刷。
- */
+/** Redis 缓存与发布封装：显式启用，连接失败时短暂熔断并自动探测恢复。 */
 @Service
 public class CacheService {
-    private static final org.slf4j.Logger log=org.slf4j.LoggerFactory.getLogger(CacheService.class);
-    private final StringRedisTemplate redis;
-    private final boolean available;
-    private final MeterRegistry meterRegistry;
+    private static final Logger log = org.slf4j.LoggerFactory.getLogger(CacheService.class);
 
-    public CacheService(@Autowired(required = false) StringRedisTemplate redis,
-                        @Autowired(required = false) MeterRegistry registry) {
-        this.redis = redis;
-        this.available = redis != null;
-        this.meterRegistry = registry;
+    private final StringRedisTemplate redis;
+    private final MeterRegistry meterRegistry;
+    private final boolean configured;
+    private final long failureCooldownNanos;
+    private final LongSupplier nanoTime;
+    private final AtomicLong disabledUntil = new AtomicLong();
+    private final AtomicBoolean healthy = new AtomicBoolean();
+    private final AtomicBoolean degraded = new AtomicBoolean();
+
+    @Autowired
+    public CacheService(
+            ObjectProvider<StringRedisTemplate> redisProvider,
+            ObjectProvider<MeterRegistry> registryProvider,
+            AppProperties properties) {
+        this(redisProvider.getIfAvailable(), registryProvider.getIfAvailable(), properties, System::nanoTime);
     }
 
-    /** Redis 是否可用（测试环境或 Redis 宕机时返回 false） */
-    public boolean isAvailable() { return available; }
+    CacheService(StringRedisTemplate redis, MeterRegistry registry, AppProperties properties, LongSupplier nanoTime) {
+        this.redis = redis;
+        this.meterRegistry = registry;
+        this.configured = properties.getRedis().isEnabled() && redis != null;
+        Duration cooldown = properties.getRedis().getFailureCooldown();
+        this.failureCooldownNanos =
+                Math.max(1L, cooldown == null ? Duration.ofSeconds(30).toNanos() : cooldown.toNanos());
+        this.nanoTime = nanoTime;
+        if (registry != null) {
+            registry.gauge("tbforum.redis.available", healthy, value -> value.get() ? 1.0 : 0.0);
+        }
+    }
 
-    /** 读取字符串缓存，记录命中/未命中指标 */
+    /** 仅在最近一次 Redis 操作成功且当前不处于冷却期时返回 true。 */
+    public boolean isAvailable() {
+        return configured && healthy.get() && nanoTime.getAsLong() >= disabledUntil.get();
+    }
+
     public String get(String key) {
-        if (!available) return null;
+        if (!canAttempt()) {
+            return null;
+        }
         try {
-            String v = redis.opsForValue().get(key);
-            recordHitMiss(v != null);
-            return v;
+            String value = redis.opsForValue().get(key);
+            markSuccess();
+            recordHitMiss(value != null);
+            return value;
         } catch (Exception e) {
+            markFailure("get", e);
             return null;
         }
     }
 
-    /** 写入字符串缓存（带 TTL） */
     public void set(String key, String value, Duration ttl) {
-        if (!available) return;
-        try { redis.opsForValue().set(key, value, ttl); } catch (Exception ignored) {}
-    }
-
-    /** 删除缓存 */
-    public void evict(String key) {
-        if (!available) return;
-        try { redis.delete(key); } catch (Exception ignored) {}
-    }
-
-    /** 按前缀删除缓存（使用 SCAN 避免 KEYS 阻塞） */
-    public void evictByPrefix(String prefix) {
-        if (!available) return;
+        if (!canAttempt()) {
+            return;
+        }
         try {
-            var opts = org.springframework.data.redis.core.ScanOptions.scanOptions().match(prefix + "*").count(100).build();
-            try (var conn = redis.getRequiredConnectionFactory().getConnection()) {
-                java.util.Set<String> keys = new java.util.HashSet<>();
-                try (var cursor = conn.scan(opts)) {
-                    while (cursor.hasNext()) { keys.add(new String(cursor.next(), java.nio.charset.StandardCharsets.UTF_8)); }
-                }
-                if (!keys.isEmpty()) redis.delete(keys);
-            }
-        } catch (Exception e) { log.warn("cache evict failed", e); }
+            redis.opsForValue().set(key, value, ttl);
+            markSuccess();
+        } catch (Exception e) {
+            markFailure("set", e);
+        }
     }
 
-    /**
-     * 浏览数防刷：检查并标记 IP 访问记录。
-     * @return true 表示本次访问应计入浏览数（首次或窗口已过），false 表示重复访问应忽略
-     */
+    public void evict(String key) {
+        if (!canAttempt()) {
+            return;
+        }
+        try {
+            redis.delete(key);
+            markSuccess();
+        } catch (Exception e) {
+            markFailure("evict", e);
+        }
+    }
+
+    /** 按前缀删除缓存，使用 SCAN 避免 KEYS 阻塞。 */
+    public void evictByPrefix(String prefix) {
+        if (!canAttempt()) {
+            return;
+        }
+        try {
+            var options =
+                    ScanOptions.scanOptions().match(prefix + "*").count(100).build();
+            try (var connection = redis.getRequiredConnectionFactory().getConnection()) {
+                var keys = new HashSet<String>();
+                try (var cursor = connection.scan(options)) {
+                    while (cursor.hasNext()) {
+                        keys.add(new String(cursor.next(), StandardCharsets.UTF_8));
+                    }
+                }
+                if (!keys.isEmpty()) {
+                    redis.delete(keys);
+                }
+            }
+            markSuccess();
+        } catch (Exception e) {
+            markFailure("evict-prefix", e);
+        }
+    }
+
+    /** Redis 不可用时允许计数，保证缓存故障不会阻断帖子读取。 */
     public boolean tryIncrementView(String ip, Long postId, Duration window) {
-        if (!available) return true; // Redis 不可用时回退到每次+1
+        if (!canAttempt()) {
+            return true;
+        }
         String key = "view:" + ip + ":" + postId;
         try {
-            Boolean ok = redis.opsForValue().setIfAbsent(key, "1", window.getSeconds(), TimeUnit.SECONDS);
-            return Boolean.TRUE.equals(ok);
-        } catch (Exception e) { return true; } // 异常时降级为允许计数
+            Boolean inserted = redis.opsForValue().setIfAbsent(key, "1", window.getSeconds(), TimeUnit.SECONDS);
+            markSuccess();
+            return Boolean.TRUE.equals(inserted);
+        } catch (Exception e) {
+            markFailure("view-dedup", e);
+            return true;
+        }
     }
 
-    /** 记录缓存命中/未命中（用于计算缓存命中率） */
-    private void recordHitMiss(boolean hit) {
-        if (meterRegistry == null) return;
+    /** 使用同一熔断状态发布 Pub/Sub 事件。 */
+    public boolean publish(String channel, String payload) {
+        if (!canAttempt()) {
+            return false;
+        }
         try {
-            meterRegistry.counter("tbforum.cache.requests", "result", hit ? "hit" : "miss").increment();
-        } catch (Exception ignored) {}
+            redis.convertAndSend(channel, payload);
+            markSuccess();
+            return true;
+        } catch (Exception e) {
+            markFailure("publish", e);
+            return false;
+        }
+    }
+
+    private boolean canAttempt() {
+        return configured && nanoTime.getAsLong() >= disabledUntil.get();
+    }
+
+    private void markFailure(String operation, Exception error) {
+        long now = nanoTime.getAsLong();
+        long previous = disabledUntil.getAndSet(saturatedAdd(now, failureCooldownNanos));
+        healthy.set(false);
+        degraded.set(true);
+        if (previous <= now) {
+            log.warn("Redis 操作失败，进入冷却期 operation={}: {}", operation, error.getMessage());
+            recordCircuitEvent("opened");
+        }
+    }
+
+    private void markSuccess() {
+        disabledUntil.set(0L);
+        healthy.set(true);
+        if (degraded.getAndSet(false)) {
+            log.info("Redis 连接已恢复");
+            recordCircuitEvent("recovered");
+        }
+    }
+
+    private void recordHitMiss(boolean hit) {
+        if (meterRegistry != null) {
+            meterRegistry
+                    .counter("tbforum.cache.requests", "result", hit ? "hit" : "miss")
+                    .increment();
+        }
+    }
+
+    private void recordCircuitEvent(String event) {
+        if (meterRegistry != null) {
+            meterRegistry
+                    .counter("tbforum.redis.circuit.events", "event", event)
+                    .increment();
+        }
+    }
+
+    private static long saturatedAdd(long value, long increment) {
+        long result = value + increment;
+        return result < value ? Long.MAX_VALUE : result;
     }
 }

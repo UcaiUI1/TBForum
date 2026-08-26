@@ -19,6 +19,20 @@ spring:
       timeout: 2000ms
 app.jwt.secret: ${JWT_SECRET}
 app.jwt.expiration-hours: 24
+app.public-base-url: ${PUBLIC_BASE_URL}
+app.upload.max-file-size: ${UPLOAD_MAX_FILE_SIZE:2097152}
+app.upload.max-width: ${UPLOAD_MAX_WIDTH:4096}
+app.upload.max-height: ${UPLOAD_MAX_HEIGHT:4096}
+app.upload.max-pixels: ${UPLOAD_MAX_PIXELS:16777216}
+app.upload.max-user-storage: ${UPLOAD_MAX_USER_STORAGE:52428800}
+app.upload.pending-ttl: ${UPLOAD_PENDING_TTL:24h}
+app.upload.cleanup-interval: ${UPLOAD_CLEANUP_INTERVAL:1h}
+app.upload.cleanup-batch-size: ${UPLOAD_CLEANUP_BATCH_SIZE:100}
+app.upload.legacy-reconciliation-enabled: ${UPLOAD_LEGACY_RECONCILIATION_ENABLED:true}
+app.upload.legacy-reconciliation-batch-size: ${UPLOAD_LEGACY_RECONCILIATION_BATCH_SIZE:200}
+app.storage.local.dir: ${UPLOAD_DIR:uploads}
+app.redis.enabled: ${REDIS_ENABLED:true}
+app.redis.failure-cooldown: ${REDIS_FAILURE_COOLDOWN:30s}
 server:
   error:
     include-message: never
@@ -34,7 +48,7 @@ management:
       show-details: when-authorized
   health:
     redis:
-      enabled: true
+      enabled: ${REDIS_ENABLED:true}
   metrics:
     tags:
       application: tbforum

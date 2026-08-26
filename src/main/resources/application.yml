@@ -25,8 +25,25 @@ spring:
 server.error.include-message: always
 app.jwt.secret: ${JWT_SECRET:change-this-development-key-to-a-long-random-secret-123456789}
 app.jwt.expiration-hours: 24
+app.public-base-url: ${PUBLIC_BASE_URL:http://localhost:8089}
+app.upload.max-file-size: ${UPLOAD_MAX_FILE_SIZE:2097152}
+app.upload.max-width: ${UPLOAD_MAX_WIDTH:4096}
+app.upload.max-height: ${UPLOAD_MAX_HEIGHT:4096}
+app.upload.max-pixels: ${UPLOAD_MAX_PIXELS:16777216}
+app.upload.max-user-storage: ${UPLOAD_MAX_USER_STORAGE:52428800}
+app.upload.pending-ttl: ${UPLOAD_PENDING_TTL:24h}
+app.upload.cleanup-interval: ${UPLOAD_CLEANUP_INTERVAL:1h}
+app.upload.cleanup-batch-size: ${UPLOAD_CLEANUP_BATCH_SIZE:100}
+app.upload.legacy-reconciliation-enabled: ${UPLOAD_LEGACY_RECONCILIATION_ENABLED:true}
+app.upload.legacy-reconciliation-batch-size: ${UPLOAD_LEGACY_RECONCILIATION_BATCH_SIZE:200}
+app.storage.local.dir: ${UPLOAD_DIR:uploads}
+app.redis.enabled: ${REDIS_ENABLED:false}
+app.redis.failure-cooldown: ${REDIS_FAILURE_COOLDOWN:30s}
+app.rate-limit.max-buckets: ${RATE_LIMIT_MAX_BUCKETS:10000}
+app.rate-limit.expire-after-access: ${RATE_LIMIT_EXPIRE_AFTER_ACCESS:10m}
+app.rate-limit.trusted-proxies: ${TRUSTED_PROXIES:}
 management:
   endpoints.web.exposure.include: health,info,metrics,prometheus
   endpoint.health.show-details: when-authorized
-  health.redis.enabled: true
+  health.redis.enabled: ${REDIS_ENABLED:false}
   metrics.tags.application: tbforum

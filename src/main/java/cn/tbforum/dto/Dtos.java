@@ -1,28 +1,309 @@
 package cn.tbforum.dto;
-import cn.tbforum.domain.*; import cn.tbforum.repo.FollowRepository; import cn.tbforum.repo.FavoriteRepository; import cn.tbforum.repo.InteractionRepository;
-import jakarta.validation.constraints.*; import java.time.Instant; import java.util.List;
+
+import cn.tbforum.domain.*;
+import cn.tbforum.repo.FavoriteRepository;
+import cn.tbforum.repo.FollowRepository;
+import cn.tbforum.repo.InteractionRepository;
+import jakarta.validation.constraints.*;
+import java.time.Instant;
+import java.util.List;
+
 public final class Dtos {
- private Dtos() {}
- public record Credentials(@NotBlank @Size(min=3,max=40) @Pattern(regexp="[a-zA-Z0-9_\\u4e00-\\u9fa5]{3,40}") String username,@NotBlank @Size(min=8,max=100) String password,@Email @Size(max=255) String email){}
- public record ForgotInput(@NotBlank @Email @Size(max=255) String email){}
- public record ResetInput(@NotBlank @Size(max=200) String token,@NotBlank @Size(min=8,max=100) String newPassword){}
- public record Token(String token,String username){}
- public record ForumInput(@NotBlank @Size(max=100) String name,@NotBlank @Pattern(regexp="[a-z0-9-]{3,64}") String slug,@Size(max=500) String description){}
- public record PostInput(@NotBlank @Size(max=180) String title,@NotBlank @Size(max=20000) String content){}
- public record CommentInput(@NotBlank @Size(max=5000) String content,Long parentId){}
- public record InteractionInput(@NotNull Interaction.Kind kind){}
- public record UserView(Long id,String username,boolean verified,String avatarUrl,String bio,String signature,String role,Instant bannedUntil,Instant mutedUntil){ static public UserView of(User u){return new UserView(u.id,u.username,u.verified,u.avatarUrl,u.bio,u.signature,u.role.name(),u.bannedUntil,u.mutedUntil);}}
- public record UserDetailView(Long id,String username,boolean verified,String avatarUrl,String bio,String signature,long following,long followers,boolean isFollowing,boolean isSelf,boolean mutual){ static public UserDetailView of(User u,User viewer,FollowRepository follows){boolean isSelf=viewer!=null&&viewer.id.equals(u.id);boolean following=!isSelf&&viewer!=null&&follows.findByFollowerAndFollowee(viewer,u).isPresent();boolean mutual=following&&follows.findByFollowerAndFollowee(u,viewer).isPresent();return new UserDetailView(u.id,u.username,u.verified,u.avatarUrl,u.bio,u.signature,follows.countByFollower(u),follows.countByFollowee(u),following,isSelf,mutual);}}
- public record ProfileInput(@Size(min=3,max=40) @Pattern(regexp="[a-zA-Z0-9_\\u4e00-\\u9fa5]{3,40}") String username,@Size(max=2048) String avatarUrl,@Size(max=500) String bio,@Size(max=100) String signature){}
- public record ProfileUpdateView(String token,UserView user){}
- public record ForumView(Long id,String slug,String name,String description,UserView owner,String customReportReason1,String customReportReason2){static public ForumView of(Forum f){return new ForumView(f.id,f.slug,f.name,f.description,UserView.of(f.owner),f.customReportReason1,f.customReportReason2);}}
- public record PostView(Long id,String title,String content,String forum,String author,String authorAvatar,Instant createdAt,long views,long upvotes,long comments,boolean featured,boolean locked,boolean edited,Instant editedAt,boolean upvoted,boolean favorited,List<String> tags){static public PostView of(Post p){return new PostView(p.id,p.title,p.content,p.forum.slug,p.author.username,p.author.avatarUrl,p.createdAt,p.views,p.upvotes,p.commentCount,p.featured,p.locked,p.edited,p.editedAt,false,false,List.of());}static public PostView of(Post p,User viewer,FavoriteRepository favorites){return new PostView(p.id,p.title,p.content,p.forum.slug,p.author.username,p.author.avatarUrl,p.createdAt,p.views,p.upvotes,p.commentCount,p.featured,p.locked,p.edited,p.editedAt,false,viewer!=null&&favorites.existsByUserAndPost(viewer,p),List.of());}static public PostView of(Post p,User viewer,FavoriteRepository favorites,InteractionRepository interactions,List<String> tagNames){boolean up=viewer!=null&&interactions.findByUserAndPost(viewer,p).map(i->i.kind==Interaction.Kind.UP).orElse(false);return new PostView(p.id,p.title,p.content,p.forum.slug,p.author.username,p.author.avatarUrl,p.createdAt,p.views,p.upvotes,p.commentCount,p.featured,p.locked,p.edited,p.editedAt,up,viewer!=null&&favorites.existsByUserAndPost(viewer,p),tagNames);}}
- public record CommentView(Long id,String author,String authorAvatar,String content,int depth,Instant createdAt,boolean edited,Instant editedAt,boolean pinned,List<CommentView> children){}
- public record NotificationView(Long id,String kind,String text,String actor,Long postId,Long commentId,Instant createdAt,boolean read){static public NotificationView of(Notification n){return new NotificationView(n.id,n.kind.name(),n.text,n.actor!=null?n.actor.username:null,n.postId,n.commentId,n.createdAt,n.read);}}
- public record TagView(Long id,String name,long postCount){static public TagView of(Tag t){return new TagView(t.id,t.name,t.postCount);}}
- public record ReportReasons(List<String> standard,List<String> custom){}
- public record CustomReasonsInput(String reason1,String reason2){}
- public record ReportInput(@NotNull Report.TargetType targetType,@NotNull Long targetId,@NotBlank @Size(max=80) String reason){}
- public record ReportView(Long id,String reporter,String targetType,Long targetId,String reason,Instant createdAt,String status,String handledBy,Instant handledAt){static public ReportView of(Report r){return new ReportView(r.id,r.reporter.username,r.targetType.name(),r.targetId,r.reason,r.createdAt,r.status.name(),r.handledBy!=null?r.handledBy.username:null,r.handledAt);}}
- public record AuditLogView(Long id,String actor,String action,String targetType,Long targetId,String detail,Instant createdAt){static public AuditLogView of(AuditLog a){return new AuditLogView(a.id,a.actor!=null?a.actor.username:null,a.action,a.targetType,a.targetId,a.detail,a.createdAt);}}
+    private Dtos() {}
+
+    public record Credentials(
+            @NotBlank @Size(min = 3, max = 40) @Pattern(regexp = "[a-zA-Z0-9_\\u4e00-\\u9fa5]{3,40}")
+            String username,
+
+            @NotBlank @Size(min = 8, max = 100) String password,
+            @Email @Size(max = 255) String email) {}
+
+    public record ForgotInput(
+            @NotBlank @Email @Size(max = 255) String email) {}
+
+    public record ResetInput(
+            @NotBlank @Size(max = 200) String token,
+            @NotBlank @Size(min = 8, max = 100) String newPassword) {}
+
+    public record Token(String token, String username) {}
+
+    public record ForumInput(
+            @NotBlank @Size(max = 100) String name,
+            @NotBlank @Pattern(regexp = "[a-z0-9-]{3,64}") String slug,
+            @Size(max = 500) String description) {}
+
+    public record PostInput(
+            @NotBlank @Size(max = 180) String title,
+            @NotBlank @Size(max = 20000) String content) {}
+
+    public record CommentInput(@NotBlank @Size(max = 5000) String content, Long parentId) {}
+
+    public record InteractionInput(@NotNull Interaction.Kind kind) {}
+
+    public record UserView(
+            Long id,
+            String username,
+            boolean verified,
+            String avatarUrl,
+            String bio,
+            String signature,
+            String role,
+            Instant bannedUntil,
+            Instant mutedUntil) {
+        public static UserView of(User u) {
+            return new UserView(
+                    u.id,
+                    u.username,
+                    u.verified,
+                    u.avatarUrl,
+                    u.bio,
+                    u.signature,
+                    u.role.name(),
+                    u.bannedUntil,
+                    u.mutedUntil);
+        }
+    }
+
+    public record UserDetailView(
+            Long id,
+            String username,
+            boolean verified,
+            String avatarUrl,
+            String bio,
+            String signature,
+            long following,
+            long followers,
+            boolean isFollowing,
+            boolean isSelf,
+            boolean mutual) {
+        public static UserDetailView of(User u, User viewer, FollowRepository follows) {
+            boolean isSelf = viewer != null && viewer.id.equals(u.id);
+            boolean following = !isSelf
+                    && viewer != null
+                    && follows.findByFollowerAndFollowee(viewer, u).isPresent();
+            boolean mutual =
+                    following && follows.findByFollowerAndFollowee(u, viewer).isPresent();
+            return new UserDetailView(
+                    u.id,
+                    u.username,
+                    u.verified,
+                    u.avatarUrl,
+                    u.bio,
+                    u.signature,
+                    follows.countByFollower(u),
+                    follows.countByFollowee(u),
+                    following,
+                    isSelf,
+                    mutual);
+        }
+    }
+
+    public record ProfileInput(
+            @Size(min = 3, max = 40) @Pattern(regexp = "[a-zA-Z0-9_\\u4e00-\\u9fa5]{3,40}")
+            String username,
+
+            @Size(max = 2048) String avatarUrl,
+            @Size(max = 500) String bio,
+            @Size(max = 100) String signature) {}
+
+    public record ProfileUpdateView(String token, UserView user) {}
+
+    public record ForumView(
+            Long id,
+            String slug,
+            String name,
+            String description,
+            UserView owner,
+            String customReportReason1,
+            String customReportReason2) {
+        public static ForumView of(Forum f) {
+            return new ForumView(
+                    f.id,
+                    f.slug,
+                    f.name,
+                    f.description,
+                    UserView.of(f.owner),
+                    f.customReportReason1,
+                    f.customReportReason2);
+        }
+    }
+
+    public record PostView(
+            Long id,
+            String title,
+            String content,
+            String forum,
+            String author,
+            String authorAvatar,
+            Instant createdAt,
+            long views,
+            long upvotes,
+            long comments,
+            boolean featured,
+            boolean locked,
+            boolean edited,
+            Instant editedAt,
+            boolean upvoted,
+            boolean favorited,
+            List<String> tags) {
+        public static PostView of(Post p) {
+            return new PostView(
+                    p.id,
+                    p.title,
+                    p.content,
+                    p.forum.slug,
+                    p.author.username,
+                    p.author.avatarUrl,
+                    p.createdAt,
+                    p.views,
+                    p.upvotes,
+                    p.commentCount,
+                    p.featured,
+                    p.locked,
+                    p.edited,
+                    p.editedAt,
+                    false,
+                    false,
+                    List.of());
+        }
+
+        public static PostView of(Post p, User viewer, FavoriteRepository favorites) {
+            return new PostView(
+                    p.id,
+                    p.title,
+                    p.content,
+                    p.forum.slug,
+                    p.author.username,
+                    p.author.avatarUrl,
+                    p.createdAt,
+                    p.views,
+                    p.upvotes,
+                    p.commentCount,
+                    p.featured,
+                    p.locked,
+                    p.edited,
+                    p.editedAt,
+                    false,
+                    viewer != null && favorites.existsByUserAndPost(viewer, p),
+                    List.of());
+        }
+
+        public static PostView of(
+                Post p,
+                User viewer,
+                FavoriteRepository favorites,
+                InteractionRepository interactions,
+                List<String> tagNames) {
+            boolean up = viewer != null
+                    && interactions
+                            .findByUserAndPost(viewer, p)
+                            .map(i -> i.kind == Interaction.Kind.UP)
+                            .orElse(false);
+            return new PostView(
+                    p.id,
+                    p.title,
+                    p.content,
+                    p.forum.slug,
+                    p.author.username,
+                    p.author.avatarUrl,
+                    p.createdAt,
+                    p.views,
+                    p.upvotes,
+                    p.commentCount,
+                    p.featured,
+                    p.locked,
+                    p.edited,
+                    p.editedAt,
+                    up,
+                    viewer != null && favorites.existsByUserAndPost(viewer, p),
+                    tagNames);
+        }
+    }
+
+    public record CommentView(
+            Long id,
+            String author,
+            String authorAvatar,
+            String content,
+            int depth,
+            Instant createdAt,
+            boolean edited,
+            Instant editedAt,
+            boolean pinned,
+            List<CommentView> children) {}
+
+    public record NotificationView(
+            Long id,
+            String kind,
+            String text,
+            String actor,
+            Long postId,
+            Long commentId,
+            Instant createdAt,
+            boolean read) {
+        public static NotificationView of(Notification n) {
+            return new NotificationView(
+                    n.id,
+                    n.kind.name(),
+                    n.text,
+                    n.actor != null ? n.actor.username : null,
+                    n.postId,
+                    n.commentId,
+                    n.createdAt,
+                    n.read);
+        }
+    }
+
+    public record TagView(Long id, String name, long postCount) {
+        public static TagView of(Tag t) {
+            return new TagView(t.id, t.name, t.postCount);
+        }
+    }
+
+    public record ReportReasons(List<String> standard, List<String> custom) {}
+
+    public record CustomReasonsInput(String reason1, String reason2) {}
+
+    public record ReportInput(
+            @NotNull Report.TargetType targetType,
+            @NotNull Long targetId,
+            @NotBlank @Size(max = 80) String reason) {}
+
+    public record ReportView(
+            Long id,
+            String reporter,
+            String targetType,
+            Long targetId,
+            String reason,
+            Instant createdAt,
+            String status,
+            String handledBy,
+            Instant handledAt) {
+        public static ReportView of(Report r) {
+            return new ReportView(
+                    r.id,
+                    r.reporter.username,
+                    r.targetType.name(),
+                    r.targetId,
+                    r.reason,
+                    r.createdAt,
+                    r.status.name(),
+                    r.handledBy != null ? r.handledBy.username : null,
+                    r.handledAt);
+        }
+    }
+
+    public record AuditLogView(
+            Long id, String actor, String action, String targetType, Long targetId, String detail, Instant createdAt) {
+        public static AuditLogView of(AuditLog a) {
+            return new AuditLogView(
+                    a.id,
+                    a.actor != null ? a.actor.username : null,
+                    a.action,
+                    a.targetType,
+                    a.targetId,
+                    a.detail,
+                    a.createdAt);
+        }
+    }
 }
