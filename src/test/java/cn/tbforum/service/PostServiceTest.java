@@ -137,13 +137,13 @@ class PostServiceTest {
         Tag tag = new Tag();
         tag.id = 5L;
         tag.name = "tag";
-        when(tags.findByName("tag")).thenReturn(Optional.empty());
-        when(tags.save(any(Tag.class))).thenReturn(tag);
+        when(tags.findByNameForUpdate("tag")).thenReturn(Optional.empty(), Optional.of(tag));
 
         ResponseEntity<PostView> resp = service.createPost("slug", new PostInput("title", "content #tag"));
 
         assertEquals(201, resp.getStatusCode().value());
         assertEquals(10L, resp.getBody().id());
+        verify(tags).insertIfAbsent("tag");
         verify(tags).incrementPostCount(5L, 1);
         verify(notif).notifyMentions(eq("content #tag"), eq(alice), eq(10L), isNull());
         verify(uploads).syncPostImages(alice, 10L, "content #tag");
@@ -180,5 +180,39 @@ class PostServiceTest {
         List<Long> ids = page.getContent().stream().map(PostView::id).toList();
         // 虽然老帖点赞最多，但时间衰减后排名应低于新帖
         assertEquals(List.of(3L, 2L, 1L), ids);
+    }
+
+    @Test
+    void cachedHomepageNeverSharesViewerStateAcrossUsers() throws Exception {
+        var mapper = new ObjectMapper().findAndRegisterModules();
+        Post post = post(10L, Instant.now(), 0, 0);
+        PostView common = PostView.of(post);
+        String cached = mapper.writeValueAsString(java.util.Map.of("content", List.of(common), "total", 1));
+        when(cache.getOrLoadFeed(eq("feed:latest:0:20"), any(), any())).thenReturn(cached);
+        User alice = user(1L, "alice");
+        User bob = user(2L, "bob");
+        when(userService.currentOrNull()).thenReturn(alice, bob, null);
+        when(favorites.findPostIdsByUserIdAndPostIdIn(1L, List.of(10L))).thenReturn(List.of(10L));
+        when(favorites.findPostIdsByUserIdAndPostIdIn(2L, List.of(10L))).thenReturn(List.of());
+        when(interactions.findPostIdsByUserIdAndPostIdInAndKind(
+                        1L, List.of(10L), cn.tbforum.domain.Interaction.Kind.UP))
+                .thenReturn(List.of());
+        when(interactions.findPostIdsByUserIdAndPostIdInAndKind(
+                        2L, List.of(10L), cn.tbforum.domain.Interaction.Kind.UP))
+                .thenReturn(List.of(10L));
+
+        var aliceView = service.feed("latest", 0, 20, null).getContent().get(0);
+        var bobView = service.feed("latest", 0, 20, null).getContent().get(0);
+        var anonymous = service.feed("latest", 0, 20, null).getContent().get(0);
+
+        org.junit.jupiter.api.Assertions.assertTrue(aliceView.favorited());
+        org.junit.jupiter.api.Assertions.assertFalse(aliceView.upvoted());
+        org.junit.jupiter.api.Assertions.assertFalse(bobView.favorited());
+        org.junit.jupiter.api.Assertions.assertTrue(bobView.upvoted());
+        org.junit.jupiter.api.Assertions.assertFalse(anonymous.favorited());
+        org.junit.jupiter.api.Assertions.assertFalse(anonymous.upvoted());
+        verify(favorites, never()).existsByUserAndPost(any(), any());
+        verify(interactions, never()).findByUserAndPost(any(), any());
+        verify(posts, never()).findAllByDeletedFalseOrderByCreatedAtDesc(any());
     }
 }

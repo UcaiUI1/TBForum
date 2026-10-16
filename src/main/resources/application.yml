@@ -42,8 +42,17 @@ app.redis.failure-cooldown: ${REDIS_FAILURE_COOLDOWN:30s}
 app.rate-limit.max-buckets: ${RATE_LIMIT_MAX_BUCKETS:10000}
 app.rate-limit.expire-after-access: ${RATE_LIMIT_EXPIRE_AFTER_ACCESS:10m}
 app.rate-limit.trusted-proxies: ${TRUSTED_PROXIES:}
+app.startup.enabled: ${STARTUP_WARMUP_ENABLED:true}
+app.startup.rounds: ${STARTUP_WARMUP_ROUNDS:100}
+app.startup.concurrency: ${STARTUP_WARMUP_CONCURRENCY:2}
+app.startup.timeout: ${STARTUP_WARMUP_TIMEOUT:60s}
+app.startup.request-timeout: ${STARTUP_WARMUP_REQUEST_TIMEOUT:5s}
+server.shutdown: graceful
+spring.lifecycle.timeout-per-shutdown-phase: 30s
 management:
   endpoints.web.exposure.include: health,info,metrics,prometheus
   endpoint.health.show-details: when-authorized
+  endpoint.health.probes.enabled: true
+  endpoint.health.group.readiness.include: readinessState,db
   health.redis.enabled: ${REDIS_ENABLED:false}
   metrics.tags.application: tbforum

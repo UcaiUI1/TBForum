@@ -14,9 +14,15 @@ public interface FavoriteRepository extends JpaRepository<Favorite, Long> {
 
     boolean existsByUserAndPost(User u, Post p);
 
+    @Query("select f.post.id from Favorite f where f.user.id=:userId and f.post.id in :postIds")
+    List<Long> findPostIdsByUserIdAndPostIdIn(@Param("userId") Long userId, @Param("postIds") List<Long> postIds);
+
     @Transactional
     void deleteByUserAndPost(User u, Post p);
 
-    @Query("select f.post from Favorite f where f.user=:u and f.post.deleted=false order by f.createdAt desc")
+    @Query(
+            value =
+                    "select p from Favorite fav join fav.post p join fetch p.author join fetch p.forum f join fetch f.owner where fav.user=:u and p.deleted=false order by fav.createdAt desc",
+            countQuery = "select count(fav) from Favorite fav where fav.user=:u and fav.post.deleted=false")
     Page<Post> findPostsByUser(@Param("u") User u, Pageable p);
 }

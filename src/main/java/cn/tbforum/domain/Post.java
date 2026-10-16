@@ -11,7 +11,12 @@ import jakarta.persistence.Table;
 import java.time.Instant;
 
 @Entity
-@Table(name = "posts", indexes = @Index(name = "idx_posts_forum_created", columnList = "forum_id,createdAt"))
+@Table(
+        name = "posts",
+        indexes = {
+            @Index(name = "idx_posts_forum_created", columnList = "forum_id,createdAt"),
+            @Index(name = "idx_posts_deleted_created", columnList = "deleted,createdAt DESC")
+        })
 public class Post {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)

@@ -10,30 +10,38 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.transaction.annotation.Transactional;
 
 public interface PostRepository extends JpaRepository<Post, Long> {
+    @EntityGraph(attributePaths = {"author", "forum", "forum.owner"})
     Page<Post> findByForumAndDeletedFalse(Forum forum, Pageable p);
 
+    @EntityGraph(attributePaths = {"author", "forum", "forum.owner"})
     Page<Post> findByForumAndFeaturedTrueAndDeletedFalse(Forum forum, Pageable p);
 
     List<Post> findByForumAndDeletedFalse(Forum forum);
 
+    @EntityGraph(attributePaths = {"author", "forum", "forum.owner"})
     Page<Post> findByAuthorAndDeletedFalse(User author, Pageable p);
 
+    @EntityGraph(attributePaths = {"author", "forum", "forum.owner"})
     Page<Post> findAllByDeletedFalseOrderByCreatedAtDesc(Pageable p);
 
+    @EntityGraph(attributePaths = {"author", "forum", "forum.owner"})
     Page<Post> findByFeaturedTrueAndDeletedFalse(Pageable p);
 
     List<Post> findByDeletedFalse();
 
     List<Post> findByIdGreaterThanOrderByIdAsc(Long id, Pageable pageable);
 
+    @EntityGraph(attributePaths = {"author", "forum", "forum.owner"})
     @Query(
             "select p from Post p where p.deleted=false and (lower(p.title) like lower(concat('%',:q,'%')) or lower(p.content) like lower(concat('%',:q,'%')))")
     Page<Post> search(@Param("q") String q, Pageable p);
     /** 热门候选：近 N 天内有互动的帖子，取前 300 条由服务层做时间衰减评分 */
+    @EntityGraph(attributePaths = {"author", "forum", "forum.owner"})
     @Query(
             "select p from Post p where p.deleted=false and p.createdAt>=:since order by (p.upvotes + p.commentCount*2 + p.views*0.01) desc, p.createdAt desc")
     List<Post> findHotCandidates(@Param("since") Instant since, Pageable p);
 
+    @EntityGraph(attributePaths = {"author", "forum", "forum.owner"})
     @Query(
             "select p from Post p where p.forum=:forum and p.deleted=false and p.createdAt>=:since order by (p.upvotes + p.commentCount*2 + p.views*0.01) desc, p.createdAt desc")
     List<Post> findHotCandidatesByForum(@Param("forum") Forum forum, @Param("since") Instant since, Pageable p);
@@ -63,6 +71,7 @@ public interface PostRepository extends JpaRepository<Post, Long> {
     @Query("update Post p set p.deleted=true where p.forum=:forum and p.deleted=false")
     int softDeleteByForum(@Param("forum") Forum forum);
     /** fate 排序：用 seed 做伪随机排序（稳定分页，避免全表加载 OOM） */
+    @EntityGraph(attributePaths = {"author", "forum", "forum.owner"})
     @Query("select p from Post p where p.deleted=false order by mod(p.id * :seed, 1000003) desc, p.createdAt desc")
     Page<Post> findFateBySeed(@Param("seed") Long seed, Pageable p);
     /** fate 排序：无 seed 时用 DB 随机函数（仅适合第一页，翻页需前端传 seed） */
@@ -79,6 +88,7 @@ public interface PostRepository extends JpaRepository<Post, Long> {
             nativeQuery = true)
     Page<Post> findFateRandomByForum(@Param("forumId") Long forumId, Pageable p);
 
+    @EntityGraph(attributePaths = {"author", "forum", "forum.owner"})
     @Query(
             "select p from Post p where p.forum=:forum and p.deleted=false order by mod(p.id * :seed, 1000003) desc, p.createdAt desc")
     Page<Post> findFateByForumBySeed(@Param("forum") Forum forum, @Param("seed") Long seed, Pageable p);

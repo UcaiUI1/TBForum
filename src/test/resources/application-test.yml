@@ -17,4 +17,5 @@ app.jwt.secret: test-secret-key-for-jwt-signing-must-be-long-enough-1234567890
 app.jwt.expiration-hours: 1
 app.public-base-url: https://forum.test
 app.rate-limit.enabled: false
+app.startup.enabled: false
 app.upload.cleanup-interval: 24h

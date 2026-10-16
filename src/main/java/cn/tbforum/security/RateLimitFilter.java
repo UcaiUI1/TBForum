@@ -14,6 +14,7 @@ import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.time.Duration;
 import org.slf4j.Logger;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -29,6 +30,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
     private final Cache<String, Bucket> buckets;
     private final ClientIpResolver clientIpResolver;
 
+    @Autowired
     public RateLimitFilter(AppProperties properties, ClientIpResolver clientIpResolver) {
         this(properties, clientIpResolver, Ticker.systemTicker());
     }

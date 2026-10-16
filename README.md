@@ -46,6 +46,10 @@ mvn spring-boot:run
 
 若应用部署在反向代理后，请通过 `TRUSTED_PROXIES` 显式配置可信代理 CIDR（逗号分隔，例如 `127.0.0.1/32,10.0.0.0/8`）；未配置时限流只使用 TCP 对端地址，不信任客户端传入的转发头。
 
+应用默认先完成读取预热，再开放业务流量。发布时应等待 `/actuator/health/readiness` 返回成功，不能只检查端口或启动日志。预热参数、探针、等待脚本及优雅关闭流程见[冷启动与接流量说明](docs/startup-readiness.md)。
+
+本轮列表索引、批量查询、首页缓存并发重建与标签并发修复的代码入口、压测对照和适用边界见[性能与并发优化记录](docs/performance-optimization.md)。
+
 ### 前端构建与部署
 
 ```powershell

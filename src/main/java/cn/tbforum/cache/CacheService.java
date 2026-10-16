@@ -5,16 +5,26 @@ import io.micrometer.core.instrument.MeterRegistry;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.HashSet;
+import java.util.List;
+import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongSupplier;
+import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.data.redis.core.ScanOptions;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /** Redis 缓存与发布封装：显式启用，连接失败时短暂熔断并自动探测恢复。 */
 @Service
@@ -29,6 +39,19 @@ public class CacheService {
     private final AtomicLong disabledUntil = new AtomicLong();
     private final AtomicBoolean healthy = new AtomicBoolean();
     private final AtomicBoolean degraded = new AtomicBoolean();
+    private static final String FEED_GENERATION_KEY = "cache-generation:feed";
+    private static final Duration REBUILD_LEASE = Duration.ofSeconds(30);
+    private static final DefaultRedisScript<Long> PUBLISH_FEED = script("redis/feed-cache-publish.lua");
+    private static final DefaultRedisScript<Long> RELEASE_LEASE = script("redis/cache-release-lease.lua");
+    private final ConcurrentHashMap<String, CompletableFuture<String>> feedLoads = new ConcurrentHashMap<>();
+    private final AtomicLong feedGeneration = new AtomicLong();
+
+    private static DefaultRedisScript<Long> script(String path) {
+        var script = new DefaultRedisScript<Long>();
+        script.setLocation(new ClassPathResource(path));
+        script.setResultType(Long.class);
+        return script;
+    }
 
     @Autowired
     public CacheService(
@@ -83,6 +106,111 @@ public class CacheService {
         }
     }
 
+    /** Merge concurrent homepage misses. Only anonymous data may be returned by the loader. */
+    public String getOrLoadFeed(String key, Duration ttl, Supplier<String> loader) {
+        String cached = get(key);
+        if (cached != null) return cached;
+        var mine = new CompletableFuture<String>();
+        var existing = feedLoads.putIfAbsent(key, mine);
+        if (existing != null) {
+            recordFeedEvent("coalesced");
+            try {
+                return existing.join();
+            } catch (CompletionException e) {
+                if (e.getCause() instanceof RuntimeException cause) throw cause;
+                if (e.getCause() instanceof Error cause) throw cause;
+                throw e;
+            }
+        }
+        try {
+            cached = get(key);
+            String value = cached != null ? cached : rebuildFeed(key, ttl, loader);
+            mine.complete(value);
+            return value;
+        } catch (RuntimeException | Error e) {
+            mine.completeExceptionally(e);
+            throw e;
+        } finally {
+            feedLoads.remove(key, mine);
+        }
+    }
+
+    private String rebuildFeed(String key, Duration ttl, Supplier<String> loader) {
+        if (!canAttempt()) return loader.get();
+        String leaseKey = "cache-rebuild:" + key;
+        String token = UUID.randomUUID().toString();
+        long deadline = System.nanoTime() + Duration.ofSeconds(2).toNanos();
+        while (canAttempt()) {
+            boolean acquired;
+            try {
+                acquired = Boolean.TRUE.equals(redis.opsForValue().setIfAbsent(leaseKey, token, REBUILD_LEASE));
+                markSuccess();
+            } catch (Exception e) {
+                markFailure("feed-lease", e);
+                break;
+            }
+            if (acquired) {
+                try {
+                    return buildAndPublishFeed(key, leaseKey, token, ttl, loader);
+                } finally {
+                    releaseLease(leaseKey, token);
+                }
+            }
+            String cached = get(key);
+            if (cached != null) return cached;
+            // A slow/unreachable owner must not block readers indefinitely.
+            // A fallback result is deliberately not published without ownership.
+            if (System.nanoTime() >= deadline) break;
+            try {
+                Thread.sleep(10);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException("Interrupted while waiting for feed rebuild", e);
+            }
+        }
+        return loader.get();
+    }
+
+    private String buildAndPublishFeed(
+            String key, String leaseKey, String token, Duration ttl, Supplier<String> loader) {
+        String generation;
+        long localGeneration = feedGeneration.get();
+        try {
+            generation = redis.opsForValue().get(FEED_GENERATION_KEY);
+            markSuccess();
+        } catch (Exception e) {
+            markFailure("feed-generation", e);
+            return loader.get();
+        }
+        String value = loader.get();
+        if (value != null && localGeneration == feedGeneration.get() && canAttempt()) {
+            try {
+                Long published = redis.execute(
+                        PUBLISH_FEED,
+                        List.of(key, FEED_GENERATION_KEY, leaseKey),
+                        generation == null ? "0" : generation,
+                        token,
+                        value,
+                        Long.toString(Math.max(1L, ttl.toMillis())));
+                markSuccess();
+                recordFeedEvent(Long.valueOf(1L).equals(published) ? "published" : "superseded");
+            } catch (Exception e) {
+                markFailure("feed-publish", e);
+            }
+        }
+        return value;
+    }
+
+    private void releaseLease(String key, String token) {
+        if (!canAttempt()) return;
+        try {
+            redis.execute(RELEASE_LEASE, List.of(key), token);
+            markSuccess();
+        } catch (Exception e) {
+            markFailure("feed-release", e);
+        }
+    }
+
     public void evict(String key) {
         if (!canAttempt()) {
             return;
@@ -97,10 +225,26 @@ public class CacheService {
 
     /** 按前缀删除缓存，使用 SCAN 避免 KEYS 阻塞。 */
     public void evictByPrefix(String prefix) {
+        if (TransactionSynchronizationManager.isActualTransactionActive()
+                && TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    evictByPrefixNow(prefix);
+                }
+            });
+            return;
+        }
+        evictByPrefixNow(prefix);
+    }
+
+    private void evictByPrefixNow(String prefix) {
+        if ("feed:".equals(prefix)) feedGeneration.incrementAndGet();
         if (!canAttempt()) {
             return;
         }
         try {
+            if ("feed:".equals(prefix)) redis.opsForValue().increment(FEED_GENERATION_KEY);
             var options =
                     ScanOptions.scanOptions().match(prefix + "*").count(100).build();
             try (var connection = redis.getRequiredConnectionFactory().getConnection()) {
@@ -188,6 +332,12 @@ public class CacheService {
             meterRegistry
                     .counter("tbforum.redis.circuit.events", "event", event)
                     .increment();
+        }
+    }
+
+    private void recordFeedEvent(String event) {
+        if (meterRegistry != null) {
+            meterRegistry.counter("tbforum.cache.feed.rebuild", "result", event).increment();
         }
     }
 
