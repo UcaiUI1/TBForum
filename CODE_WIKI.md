@@ -17,7 +17,7 @@ TBForum 是一个功能完整的轻量级论坛系统，采用前后端分离开
 - **无限嵌套评论树**：邻接表 + `rootId` + `depth` 模型，按根评论分页返回 `Page<CommentView>`，支持评论置顶、软删除（显示「[已删除]」占位）。
 - **标签系统**：发帖时正则解析 `#标签`，自动建立 Post↔Tag 多对多关系，`tag.postCount` 原子 SQL 更新防并发丢失。
 - **关注与互动**：关注/取关、互相关注状态、点赞/踩/收藏，同一用户对同一帖子仅保留最后一次互动（TOCTOU 竞态处理）。
-- **实时通知**：WebSocket 推送回复/点赞/@提及/精华/关注通知，前端指数退避重连；后端通过 Redis Pub/Sub 支持多实例通知与账号断连，实例 ID 防止自身回声，Redis 不可用时降级为本地处理。
+- **可靠异步通知**：通知与投递任务同事务保存，通过持久化消息流异步消费、跨实例广播和有界重试；前端重连、定期同步及历史分页补偿。关闭缓存能力时使用本地异步投递，账号安全断连保留原链路。详见[可靠异步通知说明](docs/reliable-notifications.md)。
 - **举报与管理**：常规 + 版块特色举报原因，ADMIN 后台处理；软删帖后自动关闭关联举报。
 - **Redis 缓存**：热门列表 + 浏览数防刷（按用户 ID 或 IP 去重），Redis 不可用时优雅降级。
 - **可观测性**：Micrometer Prometheus 监控（缓存命中率、WS 活跃连接数、发帖计数器），Actuator 健康检查（启用 Redis 时包含 Redis 状态）。
@@ -150,6 +150,7 @@ an-zhao/
 │   │   ├── FollowController.java     # 关注：关注/取关/列表
 │   │   ├── TagController.java        # 标签：热门/按标签筛选
 │   │   ├── NotificationController.java # 通知：列表/未读/已读
+│   │   ├── NotificationTaskController.java # 管理员任务查询与失败重放
 │   │   ├── ReportController.java     # 举报：提交/Admin 处理
 │   │   ├── UploadController.java     # 图片格式、尺寸、像素及完整解码校验
 │   │   ├── AdminController.java      # 管理员后台
@@ -160,6 +161,7 @@ an-zhao/
 │   │   ├── Post.java / Comment.java
 │   │   ├── Interaction.java / Favorite.java
 │   │   ├── Follow.java / Notification.java
+│   │   ├── NotificationTask.java      # 持久化投递任务、领取凭据与恢复状态
 │   │   ├── Report.java
 │   │   ├── Tag.java / PostTag.java
 │   │   └── UploadedFile.java         # 上传所有者、用途、引用状态与过期时间
@@ -167,12 +169,17 @@ an-zhao/
 │   │   └── Dtos.java                 # 19 个 record DTO（请求/响应）
 │   ├── notif/
 │   │   ├── NotificationService.java  # 通知服务 + WebSocket Handler + 跨实例事件
+│   │   ├── NotificationTaskStore.java # 短事务领取、租约恢复、退避与重放
+│   │   ├── NotificationStream.java   # 持久化消息流与未确认消息接管
+│   │   ├── NotificationWorker.java   # 独立后台投递、消费、采样与清理
+│   │   ├── NotificationProperties.java # 后台投递配置与边界校验
 │   │   └── WebSocketConfig.java      # @EnableWebSocket，注册 /ws/notifications
 │   ├── repo/                         # 12 个 JpaRepository 接口
 │   │   ├── UserRepository.java / ForumRepository.java
 │   │   ├── PostRepository.java / CommentRepository.java
 │   │   ├── InteractionRepository.java / FavoriteRepository.java
 │   │   ├── FollowRepository.java / NotificationRepository.java
+│   │   ├── NotificationTaskRepository.java # 任务持久化与管理员查询
 │   │   ├── ReportRepository.java / TagRepository.java
 │   │   ├── PostTagRepository.java / ModeratorRepository.java
 │   │   └── UploadedFileRepository.java # 配额、引用与过期文件锁定查询
@@ -331,7 +338,7 @@ an-zhao/
 - `@Service` **同时 extends `TextWebSocketHandler`**。
 - `sessions: Map<String, Set<WebSocketSession>>` 按 username 维护在线会话集合。
 - **Redis Pub/Sub 多实例广播**：`RedisConfig` 在启用 Redis 时显式创建监听容器；事件分为 `notification` 与 `disconnect`，分别负责跨实例推送和注销/封禁/密码重置后的连接关闭。事件携带实例 ID，发送实例忽略自身回声。
-- **事务安全**：WS 消息在事务提交后（`afterCommit`）才发送，避免回滚后消息已发。
+- **可靠异步投递**：业务、通知与待投递任务同事务提交；后台通过持久化消息流消费，数据库领取凭据、租约与队列期限处理双实例竞争和退出恢复，有限重试后保留失败任务供管理员重放。账号安全断连仍在原事务提交后执行。完整状态语义及验证见[可靠异步通知说明](docs/reliable-notifications.md)。
 
 **通知类型**（`Notification.Kind`）：`REPLY`、`UPVOTE`、`MENTION`、`FEATURED`、`FOLLOW`
 
@@ -349,7 +356,7 @@ an-zhao/
 
 ### 5.7 控制器层 — `cn.tbforum.controller`
 
-14 个 `@RestController`，按业务域拆分：
+控制器按业务域拆分：
 
 | 控制器 | 路径前缀 | 核心端点 |
 |--------|---------|---------|
@@ -361,6 +368,7 @@ an-zhao/
 | [FollowController](file:///c:/Users/yangc/Documents/Codex/2026-07-30/an-zhao/src/main/java/cn/tbforum/controller/FollowController.java) | `/api/users` | follow, followers, following |
 | [TagController](file:///c:/Users/yangc/Documents/Codex/2026-07-30/an-zhao/src/main/java/cn/tbforum/controller/TagController.java) | `/api/tags` | popular, postsByTag |
 | [NotificationController](file:///c:/Users/yangc/Documents/Codex/2026-07-30/an-zhao/src/main/java/cn/tbforum/controller/NotificationController.java) | `/api/notifications` | list, unreadCount, markRead, markAllRead |
+| [NotificationTaskController](src/main/java/cn/tbforum/controller/NotificationTaskController.java) | `/api/admin/notification-tasks` | 管理员任务查询与失败重放 |
 | [ReportController](file:///c:/Users/yangc/Documents/Codex/2026-07-30/an-zhao/src/main/java/cn/tbforum/controller/ReportController.java) | `/api/reports` | submit, moderatorList, moderatorCounts, handleModerated |
 | [UploadController](file:///c:/Users/yangc/Documents/Codex/2026-07-30/an-zhao/src/main/java/cn/tbforum/controller/UploadController.java) | `/api/upload` | `purpose=AVATAR|POST_IMAGE`、魔数、尺寸、像素、完整解码与重编码校验 |
 | [UploadResourceController](file:///c:/Users/yangc/Documents/Codex/2026-07-30/an-zhao/src/main/java/cn/tbforum/controller/UploadResourceController.java) | `/uploads/{filename}` | 仅读取数据库状态为 `REFERENCED` 的图片，限制媒体类型并返回 `nosniff` 与不可变缓存头 |
@@ -470,7 +478,8 @@ createRoot(rootEl).render(
 #### NotificationContext — `contexts/NotificationContext.tsx`
 
 - 路径：[NotificationContext.tsx](file:///c:/Users/yangc/Documents/Codex/2026-07-30/an-zhao/frontend/src/contexts/NotificationContext.tsx)
-- 集中管理：`notifications`、`unreadCount`、`showNotif`
+- 集中管理：`notifications`、`unreadCount`、`showNotif`，并支持通知历史分页、加载反馈、同步失败重试。
+- 重连、窗口恢复以及每三十秒同步数据库快照；通知按编号合并，已读状态单向更新，未读数以数据库查询为准。
 - WebSocket 连接（指数退避重连：3s→6s→12s→24s→30s 封顶，连接成功后重置；WS 消息按 id 去重，重连后自动拉取快照补齐未读）
 - URL：`ws://${location.host}/ws/notifications`，Sec-WebSocket-Protocol 携带 `bearer.${token}`
 
@@ -497,7 +506,7 @@ createRoot(rootEl).render(
 
 ### 6.5 组件层 — `components/`
 
-16 个 UI 组件，关键组件：
+关键界面组件：
 
 - **Header**：顶栏（品牌/搜索/用户菜单/通知铃铛/发布按钮），含实名认证入口
 - **Sidebar**：侧栏（创建版块/全站动态/版块列表/标签云）

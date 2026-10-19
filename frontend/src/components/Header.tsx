@@ -26,7 +26,7 @@ type Props = {
 
 export function Header({ query, setQuery, onSearch, onEnterGlobal, onOpenProfile, onOpenAdminPanel, onRequireLogin, onOpenPost, onCreateForum, onVerify, onOpenNav, theme, onToggleTheme }: Props) {
   const { user, verified, isAdmin, logout } = useAuth();
-  const { notifications, unreadCount, showNotif, setShowNotif, markAllRead, onNotifClick } = useNotifications();
+  const { notifications, unreadCount, showNotif, setShowNotif, markAllRead, onNotifClick, hasMore, loadingMore, syncError, loadMore, retrySync } = useNotifications();
   const [menu, setMenu] = useState(false);
   const [reportPending, setReportPending] = useState(0);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -106,10 +106,11 @@ export function Header({ query, setQuery, onSearch, onEnterGlobal, onOpenProfile
             <button className="notif-bell" aria-label="通知" onClick={() => setShowNotif(!showNotif)}><IconBell size={18} />{unreadCount > 0 && <span className="notif-badge">{unreadCount > 99 ? '99+' : unreadCount}</span>}</button>
             {showNotif && (
               <div className="notif-panel">
+                {syncError && <div role="alert" className="notif-empty">{syncError}<button className="notif-readall" onClick={retrySync}>重试同步</button></div>}
                 {groups.length === 0 ? <div className="notif-empty">暂无通知</div> : (
                   <>
-                    {groups.slice(0, 20).map(g => (
-                      <div key={g.n.id} className={'notif-item' + (g.unread ? ' unread' : '')} onClick={() => onNotifClick(g.n)}>
+                    {groups.map(g => (
+                      <div key={g.n.id} role="button" tabIndex={0} className={'notif-item' + (g.unread ? ' unread' : '')} onClick={() => onNotifClick(g.n)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); void onNotifClick(g.n); } }}>
                         <span className="notif-icon"><NotifIcon kind={g.n.kind} size={13} /></span>
                         <div className="notif-body">
                           <b>{g.count > 1 ? `${[...g.actors].slice(0, 3).join('、')} 等 ${g.count} 条` : (g.n.actor ?? '')}</b>
@@ -119,6 +120,7 @@ export function Header({ query, setQuery, onSearch, onEnterGlobal, onOpenProfile
                       </div>
                     ))}
                     <button className="notif-readall" onClick={markAllRead}>全部已读</button>
+                    {hasMore && <button className="notif-readall" disabled={loadingMore} aria-busy={loadingMore} onClick={loadMore}>{loadingMore ? '正在加载…' : '加载更早通知'}</button>}
                   </>
                 )}
               </div>

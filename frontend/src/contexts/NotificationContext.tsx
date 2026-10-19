@@ -1,19 +1,17 @@
-// 通知上下文：集中管理通知列表、未读数与 WebSocket 连接（含指数退避重连）
+// 通知以数据库快照为准，实时消息负责及时提示；重连、定时同步和历史分页负责补偿。
 import React, { createContext, useContext, useEffect, useRef, useState, useCallback } from 'react';
 import type { Notification } from '../types';
 import { notifApi } from '../services/api';
+import { mergeNotifications } from '../services/notificationState';
 import { useAuth } from './AuthContext';
 
 type NotifState = {
-  notifications: Notification[];
-  unreadCount: number;
-  showNotif: boolean;
+  notifications: Notification[]; unreadCount: number; showNotif: boolean;
   setShowNotif: (v: boolean) => void;
-  markRead: (id: number) => Promise<void>;
-  markAllRead: () => Promise<void>;
-  /** 供外部跳转通知对应帖子使用 */
+  markRead: (id: number) => Promise<void>; markAllRead: () => Promise<void>;
   onNotifClick: (n: Notification) => Promise<void>;
   setOnNotifClick: (cb: (n: Notification) => Promise<void>) => void;
+  hasMore: boolean; loadingMore: boolean; syncError: string; loadMore: () => Promise<void>; retrySync: () => void;
 };
 
 const NotificationContext = createContext<NotifState | null>(null);
@@ -23,113 +21,144 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [showNotif, setShowNotif] = useState(false);
-  // 已见过的通知 id，用于 WS 消息去重
-  const seenIds = useRef<Set<number>>(new Set());
-  // 点击通知的回调（由 App 注入，用于跳转到对应帖子）
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [syncError, setSyncError] = useState('');
   const [clickCb, setClickCb] = useState<(n: Notification) => Promise<void>>(async () => {});
+  const currentToken = useRef(token);
+  currentToken.current = token;
+  const epoch = useRef(0);
+  const nextBefore = useRef<number | null>(null);
+  const paged = useRef(false);
+  const morePending = useRef(false);
+  const requestSync = useRef<() => void>(() => {});
 
-  // token 变化时拉取通知
   useEffect(() => {
+    const generation = ++epoch.current;
+    setNotifications([]); setUnreadCount(0); setHasMore(false); setSyncError(''); setLoadingMore(false);
+    nextBefore.current = null; paged.current = false; morePending.current = false;
     if (!token) return;
-    notifApi.list(token).then(list => {
-      setNotifications(list);
-      seenIds.current = new Set(list.map(n => n.id));
-    }).catch(e => console.warn('API:', e));
-    notifApi.unreadCount(token).then(d => setUnreadCount(d.count)).catch(e => console.warn('API:', e));
-  }, [token]);
-
-  // 拉取快照（重连后用于补齐断线期间错过的通知）
-  const resync = useCallback(() => {
-    if (!token) return;
-    notifApi.list(token).then(list => {
-      setNotifications(list);
-      seenIds.current = new Set(list.map(n => n.id));
-    }).catch(e => console.warn('API:', e));
-    notifApi.unreadCount(token).then(d => setUnreadCount(d.count)).catch(e => console.warn('API:', e));
-  }, [token]);
-
-  // WebSocket 连接（指数退避：3s→6s→12s→24s→30s 封顶）
-  useEffect(() => {
-    if (!token) return;
-    let ws: WebSocket | null = null;
-    let timer: number | undefined;
     let closed = false;
+    let ws: WebSocket | null = null;
+    let reconnect: number | undefined;
+    let debounce: number | undefined;
     let retryCount = 0;
-    const connect = () => {
+    let syncing = false;
+    let dirty = false;
+    let revision = 0;
+    const valid = () => !closed && generation === epoch.current && currentToken.current === token;
+
+    const sync = async () => {
+      if (!valid()) return;
+      if (syncing) { dirty = true; return; }
+      syncing = true;
+      dirty = false;
+      const started = revision;
       try {
-        ws = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws/notifications`, [`bearer.${token}`]);
-        ws.onopen = () => { retryCount = 0; resync(); };
-        ws.onmessage = e => {
-          try {
-            const d = JSON.parse(e.data);
-            if (Array.isArray(d)) {
-              seenIds.current = new Set(d.map((x: Notification) => x.id));
-              setNotifications(d.slice(0, 50));
-              setUnreadCount(d.filter((x: Notification) => !x.read).length);
-            } else if (d && typeof d.id === 'number') {
-              if (seenIds.current.has(d.id)) return;
-              seenIds.current.add(d.id);
-              setNotifications(list => [d as Notification, ...list].slice(0, 50));
-              if (!(d as Notification).read) setUnreadCount(c => c + 1);
-            }
-          } catch (e) { console.warn('WS:', e); }
-        };
-        ws.onclose = (ev) => {
-          if (closed) return;
-          if (ev.code === 1008) { logout(); return; }
-          const d = Math.min(3000 * Math.pow(2, retryCount), 30000);
-          retryCount++;
-          timer = window.setTimeout(connect, d);
-        };
-        ws.onerror = () => { ws?.close(); };
+        const page = await notifApi.history(token);
+        if (!valid()) return;
+        if (revision !== started) dirty = true;
+        setNotifications(list => {
+          const merged = mergeNotifications(list, page.content);
+          return page.unreadCount === 0 ? merged.map(item => ({ ...item, read: true })) : merged;
+        });
+        setUnreadCount(page.unreadCount);
+        if (!paged.current) { nextBefore.current = page.nextBefore; setHasMore(page.hasMore); }
+        setSyncError('');
       } catch {
-        if (closed) return;
-        const d = Math.min(3000 * Math.pow(2, retryCount), 30000);
-        retryCount++;
-        timer = window.setTimeout(connect, d);
+        if (valid()) setSyncError('通知同步失败，请重试');
+      } finally {
+        syncing = false;
+        if (dirty && valid() && debounce == null) debounce = window.setTimeout(() => { debounce = undefined; void sync(); }, 200);
       }
     };
+    const scheduleSync = () => {
+      revision++;
+      if (debounce == null) debounce = window.setTimeout(() => { debounce = undefined; void sync(); }, 200);
+    };
+    requestSync.current = scheduleSync;
+    const connect = () => {
+      if (!valid()) return;
+      ws = new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws/notifications`, [`bearer.${token}`]);
+      ws.onopen = () => { retryCount = 0; scheduleSync(); };
+      ws.onmessage = event => {
+        if (!valid()) return;
+        try {
+          const value = JSON.parse(event.data);
+          if (value && typeof value.id === 'number') {
+            setNotifications(list => mergeNotifications(list, [value as Notification]));
+            scheduleSync();
+          }
+        } catch { /* The next snapshot repairs malformed realtime hints. */ }
+      };
+      ws.onclose = event => {
+        if (!valid()) return;
+        if (event.code === 1008) { logout(); return; }
+        const delay = Math.min(3000 * 2 ** retryCount++, 30000);
+        reconnect = window.setTimeout(connect, delay);
+      };
+      ws.onerror = () => ws?.close();
+    };
+    void sync();
     connect();
-    return () => { closed = true; if (timer) clearTimeout(timer); ws?.close(); };
-  }, [token, logout, resync]);
+    const interval = window.setInterval(() => { if (!document.hidden) void sync(); }, 30000);
+    const focus = () => { if (!document.hidden) scheduleSync(); };
+    document.addEventListener('visibilitychange', focus);
+    window.addEventListener('focus', focus);
+    return () => {
+      closed = true; requestSync.current = () => {};
+      window.clearTimeout(reconnect); window.clearTimeout(debounce); window.clearInterval(interval);
+      document.removeEventListener('visibilitychange', focus); window.removeEventListener('focus', focus);
+      ws?.close();
+    };
+  }, [token, logout]);
+
+  const loadMore = useCallback(async () => {
+    if (!token || nextBefore.current == null || morePending.current) return;
+    const generation = epoch.current;
+    morePending.current = true; setLoadingMore(true);
+    try {
+      const page = await notifApi.history(token, nextBefore.current);
+      if (generation !== epoch.current || currentToken.current !== token) return;
+      setNotifications(list => mergeNotifications(list, page.content));
+      nextBefore.current = page.nextBefore; paged.current = true; setHasMore(page.hasMore); setSyncError('');
+    } catch {
+      if (generation === epoch.current) setSyncError('通知加载失败，请重试');
+    } finally {
+      if (generation === epoch.current) { morePending.current = false; setLoadingMore(false); }
+    }
+  }, [token]);
 
   const markRead = useCallback(async (id: number) => {
     if (!token) return;
+    const generation = epoch.current;
     try {
       await notifApi.markRead(token, id);
-      setNotifications(list => list.map(x => x.id === id ? { ...x, read: true } : x));
-      setUnreadCount(c => Math.max(0, c - 1));
-    } catch (e) { console.warn('API:', e); }
+      if (generation !== epoch.current || currentToken.current !== token) return;
+      setNotifications(list => list.map(item => item.id === id ? { ...item, read: true } : item));
+      requestSync.current();
+    } catch { if (generation === epoch.current) setSyncError('标记已读失败，请重试'); }
   }, [token]);
 
   const markAllRead = useCallback(async () => {
     if (!token) return;
+    const generation = epoch.current;
     try {
       await notifApi.markAllRead(token);
-      setNotifications(list => list.map(n => ({ ...n, read: true })));
-      setUnreadCount(0);
-    } catch (e) { console.warn('API:', e); }
+      if (generation !== epoch.current || currentToken.current !== token) return;
+      setNotifications(list => list.map(item => ({ ...item, read: true })));
+      requestSync.current();
+    } catch { if (generation === epoch.current) setSyncError('标记已读失败，请重试'); }
   }, [token]);
-
-  // 注意：setClickCb 直接传函数会被 React 当作 updater 执行，必须包一层
-  const setOnNotifClick = useCallback((cb: (n: Notification) => Promise<void>) => {
-    setClickCb(() => cb);
-  }, []);
-
-  const onNotifClick = useCallback(async (n: Notification) => {
-    if (!n.read) await markRead(n.id);
-    setShowNotif(false);
-    await clickCb(n);
+  const setOnNotifClick = useCallback((cb: (n: Notification) => Promise<void>) => setClickCb(() => cb), []);
+  const onNotifClick = useCallback(async (notification: Notification) => {
+    if (!notification.read) await markRead(notification.id);
+    setShowNotif(false); await clickCb(notification);
   }, [markRead, clickCb]);
 
-  return (
-    <NotificationContext.Provider value={{
-      notifications, unreadCount, showNotif, setShowNotif,
-      markRead, markAllRead, onNotifClick, setOnNotifClick,
-    }}>
-      {children}
-    </NotificationContext.Provider>
-  );
+  return <NotificationContext.Provider value={{ notifications, unreadCount, showNotif, setShowNotif,
+    markRead, markAllRead, onNotifClick, setOnNotifClick, hasMore, loadingMore, syncError, loadMore,
+    retrySync: () => requestSync.current() }}>{children}</NotificationContext.Provider>;
 }
 
 export function useNotifications(): NotifState {
@@ -138,6 +167,5 @@ export function useNotifications(): NotifState {
   return ctx;
 }
 
-/** 通知类型对应图标 */
 export const notifIcon = (k: string): string =>
   k === 'REPLY' ? '↩' : k === 'UPVOTE' ? '↑' : k === 'MENTION' ? '@' : k === 'FEATURED' ? '★' : k === 'FOLLOW' ? '✚' : '•';

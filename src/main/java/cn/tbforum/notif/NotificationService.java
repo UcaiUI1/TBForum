@@ -5,7 +5,9 @@ import cn.tbforum.config.AppProperties;
 import cn.tbforum.domain.*;
 import cn.tbforum.domain.Notification;
 import cn.tbforum.domain.User;
+import cn.tbforum.dto.Dtos.NotificationView;
 import cn.tbforum.repo.NotificationRepository;
+import cn.tbforum.repo.NotificationTaskRepository;
 import cn.tbforum.repo.UserRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -24,21 +26,26 @@ import org.springframework.data.redis.connection.Message;
 import org.springframework.data.redis.listener.ChannelTopic;
 import org.springframework.data.redis.listener.RedisMessageListenerContainer;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.socket.*;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
+import org.springframework.web.socket.handler.ConcurrentWebSocketSessionDecorator;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
 
 @Service
 public class NotificationService extends TextWebSocketHandler {
     private static final Logger log = org.slf4j.LoggerFactory.getLogger(NotificationService.class);
-    private static final ObjectMapper MAPPER = new ObjectMapper();
+    private static final ObjectMapper MAPPER = new ObjectMapper()
+            .findAndRegisterModules()
+            .disable(com.fasterxml.jackson.databind.SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
     static final String WS_CHANNEL = "tbforum:ws:events";
 
     private final NotificationRepository notifications;
+    private final NotificationTaskRepository tasks;
     private final UserRepository users;
     private final CacheService cache;
     private final MeterRegistry meterRegistry;
@@ -49,6 +56,7 @@ public class NotificationService extends TextWebSocketHandler {
     @Autowired
     public NotificationService(
             NotificationRepository notifications,
+            NotificationTaskRepository tasks,
             UserRepository users,
             CacheService cache,
             ObjectProvider<RedisMessageListenerContainer> containerProvider,
@@ -56,6 +64,7 @@ public class NotificationService extends TextWebSocketHandler {
             AppProperties properties) {
         this(
                 notifications,
+                tasks,
                 users,
                 cache,
                 containerProvider.getIfAvailable(),
@@ -65,12 +74,14 @@ public class NotificationService extends TextWebSocketHandler {
 
     NotificationService(
             NotificationRepository notifications,
+            NotificationTaskRepository tasks,
             UserRepository users,
             CacheService cache,
             RedisMessageListenerContainer container,
             MeterRegistry registry,
             AppProperties properties) {
         this.notifications = notifications;
+        this.tasks = tasks;
         this.users = users;
         this.cache = cache;
         this.meterRegistry = registry;
@@ -94,7 +105,8 @@ public class NotificationService extends TextWebSocketHandler {
             session.close(CloseStatus.POLICY_VIOLATION);
             return;
         }
-        sessions.computeIfAbsent(username, key -> ConcurrentHashMap.newKeySet()).add(session);
+        sessions.computeIfAbsent(username, key -> ConcurrentHashMap.newKeySet())
+                .add(new ConcurrentWebSocketSessionDecorator(session, 5000, 65536));
     }
 
     @Override
@@ -105,7 +117,7 @@ public class NotificationService extends TextWebSocketHandler {
         }
         var active = sessions.get(username);
         if (active != null) {
-            active.remove(session);
+            active.removeIf(registered -> Objects.equals(registered.getId(), session.getId()));
             if (active.isEmpty()) {
                 sessions.remove(username, active);
             }
@@ -120,6 +132,7 @@ public class NotificationService extends TextWebSocketHandler {
         });
     }
 
+    @Transactional
     public void notify(User recipient, User actor, Notification.Kind kind, String text, Long postId, Long commentId) {
         if (recipient == null || actor == null || recipient.id.equals(actor.id)) {
             return;
@@ -132,27 +145,24 @@ public class NotificationService extends TextWebSocketHandler {
         notification.postId = postId;
         notification.commentId = commentId;
         notifications.save(notification);
-
-        String payload;
-        try {
-            var json = MAPPER.createObjectNode();
-            json.put("id", notification.id);
-            json.put("kind", notification.kind.name());
-            json.put("text", notification.text);
-            json.put("actor", actor.username);
-            if (postId == null) json.putNull("postId");
-            else json.put("postId", postId);
-            if (commentId == null) json.putNull("commentId");
-            else json.put("commentId", commentId);
-            json.put("createdAt", notification.createdAt.toString());
-            payload = MAPPER.writeValueAsString(json);
-        } catch (Exception e) {
-            log.warn("通知序列化失败 user={}", recipient.username, e);
-            return;
-        }
-        afterCommit(() -> dispatch(recipient.username, payload));
+        NotificationTask task = new NotificationTask();
+        task.notificationId = notification.id;
+        tasks.save(task);
     }
 
+    /** Reuse the persisted notification; retries never create another notification or unread entry. */
+    public void deliver(long notificationId) {
+        Notification notification = notifications.findById(notificationId).orElse(null);
+        if (notification == null || notification.user.deleted) return;
+        try {
+            // Include current read state and ISO date strings for retries and the browser.
+            dispatch(notification.user.username, MAPPER.writeValueAsString(NotificationView.of(notification)));
+        } catch (Exception e) {
+            throw new IllegalStateException("Notification dispatch failed", e);
+        }
+    }
+
+    @Transactional
     public void notifyMentions(String content, User actor, Long postId, Long commentId) {
         var matcher =
                 java.util.regex.Pattern.compile("@([\\w\\u4e00-\\u9fa5]{2,40})").matcher(content);
@@ -202,12 +212,13 @@ public class NotificationService extends TextWebSocketHandler {
 
     private void dispatch(String username, String payload) {
         sendWs(username, payload);
-        publishEvent("notification", username, payload);
+        if (!publishEvent("notification", username, payload))
+            throw new IllegalStateException("Notification broadcast unavailable");
     }
 
-    private void publishEvent(String type, String username, String payload) {
+    private boolean publishEvent(String type, String username, String payload) {
         if (!redisEnabled) {
-            return;
+            return true;
         }
         try {
             var event = MAPPER.createObjectNode();
@@ -218,8 +229,10 @@ public class NotificationService extends TextWebSocketHandler {
             else event.put("payload", payload);
             boolean published = cache.publish(WS_CHANNEL, MAPPER.writeValueAsString(event));
             recordPubSub(type, published ? "published" : "dropped");
+            return published;
         } catch (Exception e) {
             log.warn("WebSocket Redis 事件序列化失败 type={} user={}", type, username, e);
+            return false;
         }
     }
 

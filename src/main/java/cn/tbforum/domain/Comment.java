@@ -42,7 +42,10 @@ public class Comment {
     @Column(nullable = false)
     public Instant createdAt = Instant.now();
 
+    /** Soft deletion is conditional in the repository; a stale edit must not resurrect a deleted row. */
+    @Column(updatable = false)
     public boolean deleted = false;
+
     public boolean edited = false;
     public Instant editedAt;
     public boolean pinned = false;

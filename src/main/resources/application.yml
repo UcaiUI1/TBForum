@@ -39,6 +39,16 @@ app.upload.legacy-reconciliation-batch-size: ${UPLOAD_LEGACY_RECONCILIATION_BATC
 app.storage.local.dir: ${UPLOAD_DIR:uploads}
 app.redis.enabled: ${REDIS_ENABLED:false}
 app.redis.failure-cooldown: ${REDIS_FAILURE_COOLDOWN:30s}
+app.notifications.workers-enabled: ${NOTIFICATION_WORKERS_ENABLED:true}
+app.notifications.consumer-enabled: ${NOTIFICATION_CONSUMER_ENABLED:true}
+app.notifications.stream-key: ${NOTIFICATION_STREAM_KEY:tbforum:notifications:delivery}
+app.notifications.poll-interval: ${NOTIFICATION_POLL_INTERVAL:500ms}
+app.notifications.lease: ${NOTIFICATION_LEASE:30s}
+app.notifications.queue-timeout: ${NOTIFICATION_QUEUE_TIMEOUT:60s}
+app.notifications.retry-base: ${NOTIFICATION_RETRY_BASE:2s}
+app.notifications.retry-max: ${NOTIFICATION_RETRY_MAX:5m}
+app.notifications.max-attempts: ${NOTIFICATION_MAX_ATTEMPTS:8}
+app.notifications.completed-retention: ${NOTIFICATION_COMPLETED_RETENTION:14d}
 app.rate-limit.max-buckets: ${RATE_LIMIT_MAX_BUCKETS:10000}
 app.rate-limit.expire-after-access: ${RATE_LIMIT_EXPIRE_AFTER_ACCESS:10m}
 app.rate-limit.trusted-proxies: ${TRUSTED_PROXIES:}

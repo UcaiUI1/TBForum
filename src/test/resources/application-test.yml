@@ -18,4 +18,5 @@ app.jwt.expiration-hours: 1
 app.public-base-url: https://forum.test
 app.rate-limit.enabled: false
 app.startup.enabled: false
+app.notifications.workers-enabled: false
 app.upload.cleanup-interval: 24h

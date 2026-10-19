@@ -37,7 +37,12 @@ public class Post {
     @Column(nullable = false)
     public Instant createdAt = Instant.now();
 
-    public long views = 0, upvotes = 0, downvotes = 0, commentCount = 0;
+    public long views = 0, upvotes = 0, downvotes = 0;
+
+    /** Updated only through atomic database statements; stale entity flushes must never write this counter. */
+    @Column(updatable = false)
+    public long commentCount = 0;
+
     public boolean featured = false, deleted = false, locked = false;
     public boolean edited = false;
     public Instant editedAt;

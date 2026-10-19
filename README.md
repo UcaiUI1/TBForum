@@ -50,6 +50,8 @@ mvn spring-boot:run
 
 本轮列表索引、批量查询、首页缓存并发重建与标签并发修复的代码入口、压测对照和适用边界见[性能与并发优化记录](docs/performance-optimization.md)。
 
+站内通知采用本地事务消息表、持久化消息流、异步投递与有界重试；支持双实例领取、失败任务重放、通知历史分页及断线补偿。同时修复并发评论计数覆盖和重复删除扣减，并提供历史计数校正迁移。调用链、状态语义、配置与故障恢复验证见[可靠异步通知说明](docs/reliable-notifications.md)。
+
 ### 前端构建与部署
 
 ```powershell
@@ -102,7 +104,8 @@ mvn verify          # 运行测试，并在 verify 阶段执行格式检查
 - **标签**：`GET /tags`、`GET /tags/{name}/posts`
 - **用户**：`GET /users/{username}`、`GET /users/search?q=`、`POST/DELETE /users/{username}/follow`、`GET /users/{username}/followers|following|posts`
 - **收藏**：`POST/DELETE /posts/{id}/favorite`、`GET /users/me/favorites`
-- **通知**：`GET /notifications`、`GET /notifications/unread-count`、`PATCH /notifications/{id}/read`、`PATCH /notifications/read-all`
+- **通知**：`GET /notifications`、`GET /notifications/history?size=50&before=`、`GET /notifications/unread-count`、`PATCH /notifications/{id}/read`、`PATCH /notifications/read-all`
+- **通知投递运维**：`GET /admin/notification-tasks?status=DEAD&page=0`、`POST /admin/notification-tasks/{id}/replay`（管理员）
 - **举报**：`POST /reports`、`GET /moderator/reports`、`GET /moderator/reports/count`、`PATCH /moderator/reports/{id}`、`GET /admin/reports`、`GET /admin/reports/count`、`PATCH /admin/reports/{id}`
 - **治理**：`PATCH /admin/users/{username}/ban?days=`、`PATCH /admin/users/{username}/mute?days=`、`GET /admin/audit`
 - **搜索**：`GET /search?q=`（游客可用）

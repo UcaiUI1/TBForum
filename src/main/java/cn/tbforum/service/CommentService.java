@@ -103,7 +103,6 @@ public class CommentService {
             comments.save(c);
         }
         posts.incrementCommentCount(id, 1);
-        p.commentCount++;
         cache.evictByPrefix("feed:");
         notif.notify(p.author, c.author, Notification.Kind.REPLY, "回复了你的帖子", p.id, c.id);
         if (c.parent != null) notif.notify(c.parent.author, c.author, Notification.Kind.REPLY, "回复了你的评论", p.id, c.id);
@@ -175,12 +174,8 @@ public class CommentService {
         User u = userService.current();
         boolean isAuthor = c.author.id.equals(u.id);
         if (!isAuthor) forumService.requireModerator(p.forum);
-        if (!c.deleted) {
-            c.deleted = true;
-            c.content = "[该评论已删除]";
-            comments.save(c);
+        if (comments.softDeleteIfActive(commentId) == 1) {
             posts.incrementCommentCount(postId, -1);
-            p.commentCount = Math.max(0, p.commentCount - 1);
             cache.evictByPrefix("feed:");
             reports.dismissPendingByTarget(Report.TargetType.COMMENT, commentId, Instant.now());
             audit.log(u, "DELETE_COMMENT", "COMMENT", c.id, "");

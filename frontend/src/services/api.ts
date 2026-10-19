@@ -148,7 +148,9 @@ export const userApi = {
 };
 
 // ===== 通知 =====
+export type NotificationPage = { content: Notification[]; unreadCount: number; nextBefore: number | null; hasMore: boolean };
 export const notifApi = {
+  history: (token: string, before?: number) => api<NotificationPage>(`/api/notifications/history?size=50${before == null ? '' : `&before=${before}`}`, {}, token),
   list: (token: string) => api<Notification[]>('/api/notifications', {}, token),
   unreadCount: (token: string) => api<{ count: number }>('/api/notifications/unread-count', {}, token),
   markRead: (token: string, id: number) => api(`/api/notifications/${id}/read`, { method: 'PATCH' }, token),

@@ -7,6 +7,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import cn.tbforum.domain.PasswordResetToken;
 import cn.tbforum.domain.Role;
+import cn.tbforum.notif.NotificationService;
+import cn.tbforum.repo.NotificationTaskRepository;
 import cn.tbforum.repo.PasswordResetTokenRepository;
 import cn.tbforum.repo.UserRepository;
 import cn.tbforum.service.MailService;
@@ -33,6 +35,112 @@ import org.springframework.transaction.annotation.Transactional;
 @ActiveProfiles("test")
 @Transactional
 class ApiTest {
+    @Autowired
+    NotificationService notificationService;
+
+    @Autowired
+    NotificationTaskRepository notificationTasks;
+
+    @Test
+    void notificationHistoryPagesPastTwentyAndIsScopedToCurrentUser() throws Exception {
+        var alice = users.findByUsername(aliceUser).orElseThrow();
+        var bob = users.findByUsername(bobUser).orElseThrow();
+        for (int i = 0; i < 25; i++)
+            notificationService.notify(alice, bob, cn.tbforum.domain.Notification.Kind.FOLLOW, "item " + i, null, null);
+        notificationService.notify(bob, alice, cn.tbforum.domain.Notification.Kind.FOLLOW, "private", null, null);
+        var first = auth(aliceToken, get("/api/notifications/history?size=20"));
+        Assertions.assertEquals(200, first.getResponse().getStatus());
+        var page = json.readTree(first.getResponse().getContentAsString());
+        Assertions.assertEquals(20, page.get("content").size());
+        Assertions.assertEquals(25, page.get("unreadCount").asInt());
+        var next = auth(
+                aliceToken,
+                get("/api/notifications/history?size=20&before="
+                        + page.get("nextBefore").asLong()));
+        var older = json.readTree(next.getResponse().getContentAsString());
+        Assertions.assertEquals(5, older.get("content").size());
+        Assertions.assertFalse(older.get("hasMore").asBoolean());
+        Assertions.assertEquals(
+                1,
+                json.readTree(auth(bobToken, get("/api/notifications/history"))
+                                .getResponse()
+                                .getContentAsString())
+                        .get("content")
+                        .size());
+        long id = page.get("content").get(0).get("id").asLong();
+        Assertions.assertEquals(
+                204,
+                auth(aliceToken, patch("/api/notifications/" + id + "/read"))
+                        .getResponse()
+                        .getStatus());
+        Assertions.assertEquals(
+                204,
+                auth(aliceToken, patch("/api/notifications/" + id + "/read"))
+                        .getResponse()
+                        .getStatus());
+        Assertions.assertEquals(
+                24,
+                json.readTree(auth(aliceToken, get("/api/notifications/history"))
+                                .getResponse()
+                                .getContentAsString())
+                        .get("unreadCount")
+                        .asInt());
+        Assertions.assertEquals(
+                403,
+                auth(bobToken, patch("/api/notifications/" + id + "/read"))
+                        .getResponse()
+                        .getStatus());
+    }
+
+    @Test
+    void notificationTaskInspectionAndReplayRequireAdminAndOnlyReplayDead() throws Exception {
+        var alice = users.findByUsername(aliceUser).orElseThrow();
+        var bob = users.findByUsername(bobUser).orElseThrow();
+        notificationService.notify(alice, bob, cn.tbforum.domain.Notification.Kind.FOLLOW, "retry", null, null);
+        var task = notificationTasks.findAll().get(0);
+        task.status = cn.tbforum.domain.NotificationTask.Status.DEAD;
+        notificationTasks.saveAndFlush(task);
+        Assertions.assertEquals(
+                403,
+                auth(aliceToken, get("/api/admin/notification-tasks"))
+                        .getResponse()
+                        .getStatus());
+        Assertions.assertEquals(
+                403,
+                auth(aliceToken, post("/api/admin/notification-tasks/" + task.id + "/replay"))
+                        .getResponse()
+                        .getStatus());
+        Assertions.assertEquals(
+                200,
+                auth(adminToken, get("/api/admin/notification-tasks"))
+                        .getResponse()
+                        .getStatus());
+        Assertions.assertEquals(
+                200,
+                auth(adminToken, post("/api/admin/notification-tasks/" + task.id + "/replay"))
+                        .getResponse()
+                        .getStatus());
+        Assertions.assertEquals(
+                409,
+                auth(adminToken, post("/api/admin/notification-tasks/" + task.id + "/replay"))
+                        .getResponse()
+                        .getStatus());
+    }
+
+    @Test
+    void notificationHistoryValidatesBounds() throws Exception {
+        Assertions.assertEquals(
+                400,
+                auth(aliceToken, get("/api/notifications/history?size=101"))
+                        .getResponse()
+                        .getStatus());
+        Assertions.assertEquals(
+                400,
+                auth(aliceToken, get("/api/notifications/history?before=-1"))
+                        .getResponse()
+                        .getStatus());
+    }
+
     @Autowired
     MockMvc mvc;
 

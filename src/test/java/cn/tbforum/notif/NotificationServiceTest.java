@@ -16,6 +16,7 @@ import cn.tbforum.config.AppProperties;
 import cn.tbforum.domain.Notification;
 import cn.tbforum.domain.User;
 import cn.tbforum.repo.NotificationRepository;
+import cn.tbforum.repo.NotificationTaskRepository;
 import cn.tbforum.repo.UserRepository;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
@@ -39,6 +40,9 @@ class NotificationServiceTest {
     NotificationRepository notifications;
 
     @Mock
+    NotificationTaskRepository tasks;
+
+    @Mock
     UserRepository users;
 
     @Mock
@@ -57,7 +61,7 @@ class NotificationServiceTest {
     void setUp() throws Exception {
         AppProperties properties = new AppProperties();
         properties.getRedis().setEnabled(true);
-        service = new NotificationService(notifications, users, cache, container, null, properties);
+        service = new NotificationService(notifications, tasks, users, cache, container, null, properties);
 
         ArgumentCaptor<MessageListener> listenerCaptor = ArgumentCaptor.forClass(MessageListener.class);
         verify(container)
@@ -81,6 +85,17 @@ class NotificationServiceTest {
         when(cache.publish(eq(NotificationService.WS_CHANNEL), any())).thenReturn(true);
 
         service.notify(alice, bob, Notification.Kind.FOLLOW, "关注了你", null, null);
+
+        verify(tasks).save(argThat(task -> task.notificationId.equals(9L)));
+        verify(session, never()).sendMessage(any());
+        Notification persisted = new Notification();
+        persisted.id = 9L;
+        persisted.user = alice;
+        persisted.actor = bob;
+        persisted.kind = Notification.Kind.FOLLOW;
+        persisted.text = "关注了你";
+        when(notifications.findById(9L)).thenReturn(java.util.Optional.of(persisted));
+        service.deliver(9L);
 
         verify(session)
                 .sendMessage(argThat(message ->
@@ -134,7 +149,7 @@ class NotificationServiceTest {
         clearInvocations(container, cache);
         AppProperties properties = new AppProperties();
         NotificationService disabled =
-                new NotificationService(notifications, users, cache, container, null, properties);
+                new NotificationService(notifications, tasks, users, cache, container, null, properties);
 
         disabled.disconnect("alice");
 
